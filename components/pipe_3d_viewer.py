@@ -2,20 +2,31 @@
 
 import json
 from core.solver import PipelineSimulationResults
+from core.solver_3d import Simulation3DResults
 
 
-def generate_3d_pipe_html(results: PipelineSimulationResults, height_px: int = 560) -> str:
+def generate_3d_pipe_html(results, height_px: int = 560) -> str:
     """Generates a self-contained responsive Three.js 3D WebGL pipeline cutaway visualizer."""
 
-    cfg = results.config
+    if isinstance(results, Simulation3DResults):
+        cfg = results.config.pipeline_config
+        outlet_t_k = results.bulk_temperature_k[-1]
+        outlet_psat_pa = results.wall_vapor_pressure_pa[-1]
+        flashed = results.has_wall_flashed or results.has_bulk_flashed
+        flash_point = results.wall_flashing_point_m or results.bulk_flashing_point_m or 0.0
+    else:
+        cfg = results.config
+        outlet_t_k = results.outlet_temperature_k
+        outlet_psat_pa = results.outlet_vapor_pressure_pa
+        flashed = results.has_flashed
+        flash_point = results.flashing_point_m or 0.0
+
     inlet_t_c = cfg.inlet_temperature_k - 273.15
-    outlet_t_c = results.outlet_temperature_k - 273.15
+    outlet_t_c = outlet_t_k - 273.15
     inlet_p_bar = cfg.inlet_pressure_pa / 1e5
-    outlet_p_bar = results.outlet_pressure_pa / 1e5
-    outlet_psat_bar = results.outlet_vapor_pressure_pa / 1e5
+    outlet_p_bar = results.pressure_pa[-1] / 1e5
+    outlet_psat_bar = outlet_psat_pa / 1e5
     min_margin_bar = results.min_flashing_margin_pa / 1e5
-    flashed = results.has_flashed
-    flash_point = results.flashing_point_m or 0.0
     flash_ratio = (flash_point / cfg.length_m) if cfg.length_m > 0 else 0.0
 
     # Build telemetry data payload for client-side JS

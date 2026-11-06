@@ -1,15 +1,17 @@
 """Professional PDF engineering calculation report generator for LNG pipeline flow."""
 
 import io
+import math
 from typing import Dict, Any
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from core.solver import PipelineSimulationResults
+from core.solver_3d import Simulation3DResults
 
 
-def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[str, Any]) -> bytes:
+def generate_pdf_report(results, project_info: Dict[str, Any]) -> bytes:
     """Generates an executive engineering calculation sheet in PDF format."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -20,6 +22,27 @@ def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[s
         topMargin=36,
         bottomMargin=36
     )
+
+    if isinstance(results, Simulation3DResults):
+        cfg = results.config.pipeline_config
+        outlet_t_k = results.bulk_temperature_k[-1]
+        outlet_p_pa = results.pressure_pa[-1]
+        outlet_psat_pa = results.wall_vapor_pressure_pa[-1]
+        inlet_psat_pa = results.wall_vapor_pressure_pa[0]
+        flashed = results.has_wall_flashed
+        flash_point_m = results.wall_flashing_point_m or 0.0
+        v_in = cfg.mass_flow_rate_kg_s / (422.0 * math.pi * ((cfg.inner_diameter_m / 2.0) ** 2))
+        v_out = v_in
+    else:
+        cfg = results.config
+        outlet_t_k = results.outlet_temperature_k
+        outlet_p_pa = results.outlet_pressure_pa
+        outlet_psat_pa = results.outlet_vapor_pressure_pa
+        inlet_psat_pa = results.inlet_vapor_pressure_pa
+        flashed = results.has_flashed
+        flash_point_m = results.flashing_point_m or 0.0
+        v_in = results.velocity_m_s[0]
+        v_out = results.velocity_m_s[-1]
 
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
@@ -79,10 +102,9 @@ def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[s
     story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0f2a4a"), spaceAfter=12))
 
     # Executive Status Banner
-    flashed = results.has_flashed
     banner_color = colors.HexColor("#d9383a") if flashed else colors.HexColor("#28a745")
     status_text = (
-        f"DİKKAT: Boru boyunca {results.flashing_point_m:.1f} m noktasında Flaş / Kaynama Başlangıcı tespit edildi!"
+        f"DİKKAT: Boru boyunca {flash_point_m:.1f} m noktasında Flaş / Kaynama Başlangıcı tespit edildi!"
         if flashed else
         "UYGUNDUR: Tüm boru hattı boyunca sıvı tek faz korunmuş olup buharlaşma / kavitasyon riski bulunmamaktadır."
     )
@@ -99,7 +121,6 @@ def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[s
 
     # 1. Pipeline Design Inputs
     story.append(Paragraph("1. Tasarım Girdileri ve Hat Özellikleri", section_style))
-    cfg = results.config
     inputs_data = [
         [Paragraph("Hat Uzunluğu (L)", bold_style), Paragraph(f"{cfg.length_m:.1f} m", body_style),
          Paragraph("İç Çap (ID)", bold_style), Paragraph(f"{cfg.inner_diameter_m * 1000.0:.1f} mm", body_style)],
@@ -108,7 +129,7 @@ def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[s
         [Paragraph("Giriş Sıcaklığı (T_in)", bold_style), Paragraph(f"{cfg.inlet_temperature_k - 273.15:.2f} °C ({cfg.inlet_temperature_k:.2f} K)", body_style),
          Paragraph("Giriş Basıncı (P_in)", bold_style), Paragraph(f"{cfg.inlet_pressure_pa / 1e5:.3f} bar", body_style)],
         [Paragraph("Kütlesel Debi", bold_style), Paragraph(f"{cfg.mass_flow_rate_kg_s:.2f} kg/s ({cfg.mass_flow_rate_kg_s * 3.6:.1f} t/h)", body_style),
-         Paragraph("Akış Hızı (Giriş)", bold_style), Paragraph(f"{results.velocity_m_s[0]:.2f} m/s", body_style)],
+         Paragraph("Akış Hızı (Giriş)", bold_style), Paragraph(f"{v_in:.2f} m/s", body_style)],
     ]
     inputs_table = Table(inputs_data, colWidths=[130, 130, 130, 130])
     inputs_table.setStyle(TableStyle([
@@ -122,12 +143,12 @@ def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[s
     # 2. Key Calculation Results
     story.append(Paragraph("2. Termal ve Hidrolik Hesaplama Sonuçları", section_style))
     results_data = [
-        [Paragraph("Çıkış Sıcaklığı (T_out)", bold_style), Paragraph(f"{results.outlet_temperature_k - 273.15:.2f} °C", body_style),
-         Paragraph("Sıcaklık Artışı (ΔT)", bold_style), Paragraph(f"{results.outlet_temperature_k - cfg.inlet_temperature_k:.2f} °C", body_style)],
-        [Paragraph("Çıkış Statik Basıncı (P_out)", bold_style), Paragraph(f"{results.outlet_pressure_pa / 1e5:.3f} bar", body_style),
+        [Paragraph("Çıkış Sıcaklığı (T_out)", bold_style), Paragraph(f"{outlet_t_k - 273.15:.2f} °C", body_style),
+         Paragraph("Sıcaklık Artışı (ΔT)", bold_style), Paragraph(f"{outlet_t_k - cfg.inlet_temperature_k:.2f} °C", body_style)],
+        [Paragraph("Çıkış Statik Basıncı (P_out)", bold_style), Paragraph(f"{outlet_p_pa / 1e5:.3f} bar", body_style),
          Paragraph("Toplam Basınç Düşüşü (ΔP)", bold_style), Paragraph(f"{results.total_pressure_drop_pa / 1e5:.3f} bar", body_style)],
-        [Paragraph("Çıkış Buhar Basıncı (Psat)", bold_style), Paragraph(f"{results.outlet_vapor_pressure_pa / 1e5:.3f} bar", body_style),
-         Paragraph("Buhar Basıncı Artışı (ΔPsat)", bold_style), Paragraph(f"{(results.outlet_vapor_pressure_pa - results.inlet_vapor_pressure_pa) / 1e5:.3f} bar", body_style)],
+        [Paragraph("Çıkış Buhar Basıncı (Psat)", bold_style), Paragraph(f"{outlet_psat_pa / 1e5:.3f} bar", body_style),
+         Paragraph("Buhar Basıncı Artışı (ΔPsat)", bold_style), Paragraph(f"{(outlet_psat_pa - inlet_psat_pa) / 1e5:.3f} bar", body_style)],
         [Paragraph("Min. Kavitasyon/Flaş Marjı", bold_style), Paragraph(f"{results.min_flashing_margin_pa / 1e5:.3f} bar", body_style),
          Paragraph("Toplam Isı Girişi (Q_tot)", bold_style), Paragraph(f"{results.total_heat_ingress_w / 1000.0:.2f} kW ({results.total_heat_ingress_w / cfg.length_m:.1f} W/m)", body_style)],
     ]
@@ -142,8 +163,6 @@ def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[s
 
     # 3. Standards & Engineering Compliance Checks (ASME B31.3 / EN 1473)
     story.append(Paragraph("3. Mühendislik Standartları ve Güvenlik Denetimleri (ASME B31.3 / EN 1473)", section_style))
-    v_in = results.velocity_m_s[0]
-    v_out = results.velocity_m_s[-1]
     
     # Velocity bounds: 0.5 m/s to 4.5 m/s
     v_status = "UYGUN" if (0.5 <= v_out <= 4.5) else "UYARI"

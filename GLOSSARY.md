@@ -33,3 +33,15 @@ _Avoid_: Overall U-value, insulation loss
 **Darcy Friction Factor ($f$)**:
 Dimensionless flow resistance coefficient calculated via the Colebrook-White equation or Churchill correlation across laminar, transition, and fully turbulent regimes.
 _Avoid_: Roughness factor, drag coefficient
+
+**3D Cylindrical Finite-Volume Mesh ($r, \theta, z$)**:
+Volumetric discretization of the pipe flow and pipe wall into radial shells ($r$), azimuthal sectors ($\theta$), and axial marching slices ($z$).
+_Avoid_: Cartesian grid, 1D line element
+
+**Thermal Boundary Layer ($\delta_t$)**:
+The near-wall annular fluid layer across which temperature gradients between the warm pipe wall and the subcooled liquid core develop.
+_Avoid_: Film thickness, surface layer
+
+**Wall Flashing (Near-Wall Nucleation)**:
+Localized vaporization initiated at the inner pipe surface where fluid temperature $T(r=R, \theta, z)$ is highest, before bulk core saturation is reached.
+_Avoid_: Surface cavitation, bubble creep
