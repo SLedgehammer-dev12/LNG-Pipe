@@ -120,11 +120,70 @@ PRESETS = {
     }
 }
 
-INSULATION_DATA = {
-    "PIR Köpük": {"k": 0.024, "desc": "Poliizosiyanürat sert köpük (en yaygın endüstriyel izolasyon)"},
-    "Kriyojenik Aerogel": {"k": 0.015, "desc": "Yüksek performanslı nano-gözenekli esnek örtü"},
-    "Hücresel Cam (Foamglas)": {"k": 0.040, "desc": "Tamamen yanmaz, su buharı geçirmez rijit cam blok"},
-    "Vakum Ceketli MLI": {"k": 0.002, "desc": "Çok katmanlı yansıtıcı folyo + yüksek vakum (< 1e-4 mbar)"}
+INSULATION_MATERIALS_CATALOG = {
+    "PIR Köpük (Poliizosiyanürat)": {"k": 0.024, "desc": "Standart kriyojenik sert köpük (en yaygın boru yalıtımı)", "default_th": 60.0},
+    "Kriyojenik Aerogel (Cryogel Z)": {"k": 0.015, "desc": "Esnek nano-gözenekli aerojel örtü (üstün yalıtım, ince kesit)", "default_th": 20.0},
+    "Hücresel Cam (Foamglas ONE)": {"k": 0.040, "desc": "%100 Yanmaz, sıfır su buharı geçirgenliği, rijit yük taşıyıcı", "default_th": 50.0},
+    "Vakum Ceketli MLI (Çift Cidarlı)": {"k": 0.002, "desc": "Yüksek vakum (< 1e-4 mbar) + çok katmanlı yansıtıcı kalkan", "default_th": 25.0},
+    "PUR Köpük (Poliüretan)": {"k": 0.028, "desc": "Rijit enjeksiyon/sprey kriyojenik köpük", "default_th": 50.0},
+    "Armaflex Kriyojenik Kauçuk": {"k": 0.035, "desc": "Esnek, titreşim sönümleyici iç/orta elastromerik katman", "default_th": 25.0},
+    "Genleştirilmiş Kriyojenik Perlit": {"k": 0.034, "desc": "Çift cidarlı boru/tank arası perlit dolgusu", "default_th": 75.0},
+    "Taşyünü / Yüksek Yoğunluklu Mineral Yün": {"k": 0.038, "desc": "Dış yangın geciktirici (fireproofing) koruma katmanı", "default_th": 40.0},
+    "Alüminyum Buhar Kesici Ceket (0.8 mm Cladding)": {"k": 200.0, "desc": "Dış mekanik ve nem bariyeri sacı", "default_th": 0.8},
+    "Paslanmaz Çelik Dış Ceket (304 Cladding, 0.5 mm)": {"k": 15.0, "desc": "Deniz ortamı korozyon ve yangın koruma sacı", "default_th": 0.5},
+    "Özel Malzeme (Kullanıcı Tanımlı)": {"k": 0.030, "desc": "Kullanıcı tanımlı özel k iletkenlik değeri", "default_th": 30.0}
+}
+
+# Compatibility alias
+INSULATION_DATA = INSULATION_MATERIALS_CATALOG
+
+MULTI_LAYER_PACKAGES = {
+    "Özel Katman Yapılandırması": None,
+    "Standart Tek Katman: PIR Köpük (60 mm)": [
+        {"name": "PIR Köpük (Poliizosiyanürat)", "thickness_mm": 60.0, "k": 0.024}
+    ],
+    "Çift Katmanlı Kriyojenik Hibrit (Aerogel + PIR)": [
+        {"name": "Kriyojenik Aerogel (Cryogel Z)", "thickness_mm": 20.0, "k": 0.015},
+        {"name": "PIR Köpük (Poliizosiyanürat)", "thickness_mm": 50.0, "k": 0.024}
+    ],
+    "Üç Katmanlı Endüstriyel (Aerogel + Foamglas + Al Ceket)": [
+        {"name": "Kriyojenik Aerogel (Cryogel Z)", "thickness_mm": 15.0, "k": 0.015},
+        {"name": "Hücresel Cam (Foamglas ONE)", "thickness_mm": 40.0, "k": 0.040},
+        {"name": "Alüminyum Buhar Kesici Ceket (0.8 mm Cladding)", "thickness_mm": 0.8, "k": 200.0}
+    ],
+    "Yangın Korumalı Marin Hat (Foamglas + PIR + Taşyünü + SS Ceket)": [
+        {"name": "Hücresel Cam (Foamglas ONE)", "thickness_mm": 40.0, "k": 0.040},
+        {"name": "PIR Köpük (Poliizosiyanürat)", "thickness_mm": 50.0, "k": 0.024},
+        {"name": "Taşyünü / Yüksek Yoğunluklu Mineral Yün", "thickness_mm": 30.0, "k": 0.038},
+        {"name": "Paslanmaz Çelik Dış Ceket (304 Cladding, 0.5 mm)", "thickness_mm": 0.5, "k": 15.0}
+    ],
+    "Vakum Ceketli MLI (25 mm)": [
+        {"name": "Vakum Ceketli MLI (Çift Cidarlı)", "thickness_mm": 25.0, "k": 0.002}
+    ]
+}
+
+AVAILABLE_LNG_COMPONENTS = [
+    "Methane", "Ethane", "Propane", "IsoButane", "Butane", "IsoPentane", "Pentane", "Nitrogen", "CarbonDioxide"
+]
+
+COMPONENT_LABELS = {
+    "Methane": "Metan (CH4)",
+    "Ethane": "Etan (C2H6)",
+    "Propane": "Propan (C3H8)",
+    "IsoButane": "İzo-Bütan (i-C4H10)",
+    "Butane": "Normal Bütan (n-C4H10)",
+    "IsoPentane": "İzo-Pentan (i-C5H12)",
+    "Pentane": "Normal Pentan (n-C5H12)",
+    "Nitrogen": "Azot (N2)",
+    "CarbonDioxide": "Karbondioksit (CO2)"
+}
+
+LNG_PRESET_COMPOSITIONS = {
+    "Saf Metan (%100 CH4)": {"Methane": 100.0},
+    "Standart Ticari LNG (Katar/Cezayir)": {"Methane": 94.2, "Ethane": 4.5, "Propane": 0.8, "Nitrogen": 0.5},
+    "Zenginleştirilmiş Ağır LNG (Avustralya/Gorgon)": {"Methane": 88.5, "Ethane": 8.2, "Propane": 2.3, "IsoButane": 0.4, "Butane": 0.3, "Nitrogen": 0.3},
+    "Yalın Amerikan LNG (Sabine Pass / Henry Hub)": {"Methane": 97.8, "Ethane": 1.8, "Propane": 0.1, "Nitrogen": 0.3},
+    "Özel Kullanıcı Tanımlı Kompozisyon": None
 }
 
 PIPE_MATERIALS = {
@@ -155,16 +214,160 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
     pipe_mat_name = st.selectbox("Boru Malzemesi", list(PIPE_MATERIALS.keys()))
     roughness_um = st.number_input("Boru İç Pürüzlülüğü ε (µm)", min_value=1.0, max_value=500.0, value=45.0, step=5.0)
 
-with st.sidebar.expander("❄️ Kriyojenik Akışkan & Giriş Koşulları", expanded=True):
-    fluid_type_choice = st.radio("Akışkan Kompozisyonu", ["Saf Metan (%100 CH4)", "Standart Ticari LNG Karışımı"])
+# Initialize session state for multi-component composition and multi-layer insulation
+if "custom_composition" not in st.session_state:
+    st.session_state["custom_composition"] = {"Methane": 94.2, "Ethane": 4.5, "Propane": 0.8, "Nitrogen": 0.5}
+
+if "insulation_layers" not in st.session_state:
+    st.session_state["insulation_layers"] = [
+        {"name": "PIR Köpük (Poliizosiyanürat)", "thickness_mm": 60.0, "k": 0.024}
+    ]
+
+with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=True):
+    comp_mode = st.radio("Akışkan Kompozisyon Modu", ["Standart Şablon", "Özel Komponent Listesi Düzenleyici"])
+
+    if comp_mode == "Standart Şablon":
+        preset_comp_choice = st.selectbox("LNG Kompozisyon Şablonu", list(LNG_PRESET_COMPOSITIONS.keys()), index=1)
+        if preset_comp_choice == "Saf Metan (%100 CH4)":
+            is_pure_methane = True
+            active_composition = {"Methane": 100.0}
+        else:
+            is_pure_methane = False
+            active_composition = LNG_PRESET_COMPOSITIONS[preset_comp_choice]
+            summary_comp_str = ", ".join(f"{COMPONENT_LABELS.get(c, c)}: %{v:.1f}" for c, v in active_composition.items())
+            st.caption(f"🧪 **Bileşim:** {summary_comp_str}")
+    else:
+        is_pure_methane = False
+        st.markdown("###### 🧪 Çok Bileşenli Kompozisyon Düzenleyici")
+
+        avail_to_add = [c for c in AVAILABLE_LNG_COMPONENTS if c not in st.session_state["custom_composition"]]
+        if avail_to_add:
+            c_add_col1, c_add_col2 = st.columns([3, 1])
+            with c_add_col1:
+                comp_to_add = st.selectbox("Eklenecek Komponent", avail_to_add, format_func=lambda x: COMPONENT_LABELS.get(x, x), key="comp_add_sel")
+            with c_add_col2:
+                if st.button("➕ Ekle", key="btn_add_comp"):
+                    st.session_state["custom_composition"][comp_to_add] = 1.0
+                    st.rerun()
+
+        to_delete = None
+        for comp_name in list(st.session_state["custom_composition"].keys()):
+            col_k1, col_k2, col_k3 = st.columns([4, 3, 1])
+            with col_k1:
+                st.write(f"**{COMPONENT_LABELS.get(comp_name, comp_name)}**")
+            with col_k2:
+                val = st.number_input(
+                    "Mol %",
+                    min_value=0.0,
+                    max_value=100.0,
+                    value=float(st.session_state["custom_composition"][comp_name]),
+                    step=0.5,
+                    key=f"comp_input_{comp_name}",
+                    label_visibility="collapsed"
+                )
+                st.session_state["custom_composition"][comp_name] = val
+            with col_k3:
+                if comp_name != "Methane" and len(st.session_state["custom_composition"]) > 1:
+                    if st.button("🗑️", key=f"del_comp_{comp_name}"):
+                        to_delete = comp_name
+
+        if to_delete:
+            del st.session_state["custom_composition"][to_delete]
+            st.rerun()
+
+        total_mol_pct = sum(st.session_state["custom_composition"].values())
+        if abs(total_mol_pct - 100.0) > 0.05:
+            st.warning(f"⚠️ Toplam: %{total_mol_pct:.1f} (100% olmalıdır)")
+            if st.button("⚖️ 100%'e Otomatik Normalize Et", key="btn_norm_comp"):
+                if total_mol_pct > 0:
+                    for k in st.session_state["custom_composition"]:
+                        st.session_state["custom_composition"][k] = round((st.session_state["custom_composition"][k] / total_mol_pct) * 100.0, 2)
+                    st.rerun()
+        else:
+            st.success(f"✓ Toplam Mol Oranı: %{total_mol_pct:.1f}")
+
+        active_composition = st.session_state["custom_composition"]
+
     inlet_t_c = st.number_input("Giriş Sıcaklığı T_in (°C)", min_value=-182.0, max_value=-100.0, value=preset["inlet_t_c"] if preset else -161.5, step=0.5)
     inlet_p_bar = st.number_input("Giriş Toplam Basıncı P_in (bar)", min_value=1.013, max_value=60.0, value=preset["inlet_p_bar"] if preset else 5.0, step=0.5)
     mass_flow_kg_s = st.number_input("Kütlesel Debi m (kg/s)", min_value=0.5, max_value=2000.0, value=preset["mass_flow"] if preset else 40.0, step=5.0)
 
-with st.sidebar.expander("🛡️ Kriyojenik İzolasyon Katmanı", expanded=True):
-    ins_choice = st.selectbox("İzolasyon Malzemesi", list(INSULATION_DATA.keys()), index=list(INSULATION_DATA.keys()).index(preset["ins_type"]) if preset and preset["ins_type"] in INSULATION_DATA else 0)
-    ins_thickness_mm = st.number_input("İzolasyon Kalınlığı (mm)", min_value=5.0, max_value=300.0, value=preset["ins_thick_mm"] if preset else 60.0, step=5.0)
-    st.caption(f"ℹ️ {INSULATION_DATA[ins_choice]['desc']} (k = {INSULATION_DATA[ins_choice]['k']} W/m·K)")
+with st.sidebar.expander("🛡️ Çok Katmanlı Kriyojenik İzolasyon", expanded=True):
+    ins_pack_choice = st.selectbox(
+        "Hazır İzolasyon Paketi Şablonu",
+        list(MULTI_LAYER_PACKAGES.keys()),
+        index=0
+    )
+    if ins_pack_choice != "Özel Katman Yapılandırması" and MULTI_LAYER_PACKAGES[ins_pack_choice] is not None:
+        if st.button("📦 Bu Paketi Katmanlara Uygula", key="apply_pkg_btn"):
+            st.session_state["insulation_layers"] = [dict(layer) for layer in MULTI_LAYER_PACKAGES[ins_pack_choice]]
+            st.rerun()
+
+    st.markdown("###### 🧱 Katman Yönetimi (İçten Dışa)")
+    if st.button("➕ Yeni İzolasyon Katmanı Ekle", key="btn_add_layer"):
+        st.session_state["insulation_layers"].append({
+            "name": "PIR Köpük (Poliizosiyanürat)",
+            "thickness_mm": 40.0,
+            "k": 0.024
+        })
+        st.rerun()
+
+    del_layer_idx = None
+    for idx, layer in enumerate(st.session_state["insulation_layers"]):
+        is_inner = (idx == 0)
+        is_outer = (idx == len(st.session_state["insulation_layers"]) - 1)
+        tag_str = " (İç - Boru Temaslı)" if is_inner else (" (Dış - Dış Ortam)" if is_outer else "")
+        st.markdown(f"**Katman #{idx + 1}{tag_str}**")
+
+        c_mat, c_del = st.columns([5, 1])
+        with c_mat:
+            mat_keys = list(INSULATION_MATERIALS_CATALOG.keys())
+            curr_idx = mat_keys.index(layer["name"]) if layer["name"] in mat_keys else 0
+            selected_mat = st.selectbox(
+                f"Malzeme #{idx+1}",
+                mat_keys,
+                index=curr_idx,
+                key=f"layer_mat_{idx}",
+                label_visibility="collapsed"
+            )
+            if selected_mat != layer["name"]:
+                layer["name"] = selected_mat
+                layer["k"] = INSULATION_MATERIALS_CATALOG[selected_mat]["k"]
+                st.rerun()
+        with c_del:
+            if len(st.session_state["insulation_layers"]) > 1:
+                if st.button("🗑️", key=f"del_layer_{idx}"):
+                    del_layer_idx = idx
+
+        c_th, c_k = st.columns(2)
+        with c_th:
+            layer["thickness_mm"] = st.number_input(
+                f"Kalınlık (mm) #{idx+1}",
+                min_value=0.1,
+                max_value=300.0,
+                value=float(layer["thickness_mm"]),
+                step=5.0,
+                key=f"layer_th_{idx}"
+            )
+        with c_k:
+            layer["k"] = st.number_input(
+                f"İletkenlik k (W/m·K) #{idx+1}",
+                min_value=0.001,
+                max_value=250.0,
+                value=float(layer["k"]),
+                format="%.4f",
+                key=f"layer_k_{idx}"
+            )
+
+        st.caption(f"ℹ️ {INSULATION_MATERIALS_CATALOG.get(layer['name'], {}).get('desc', '')}")
+        st.markdown("<hr style='margin:4px 0; border-color:rgba(255,255,255,0.08);'/>", unsafe_allow_html=True)
+
+    if del_layer_idx is not None:
+        st.session_state["insulation_layers"].pop(del_layer_idx)
+        st.rerun()
+
+    total_ins_thick_mm = sum(l["thickness_mm"] for l in st.session_state["insulation_layers"])
+    st.info(f"🛡️ **Toplam İzolasyon:** {total_ins_thick_mm:.1f} mm ({len(st.session_state['insulation_layers'])} Katman)")
 
 with st.sidebar.expander("☀️ Çevre ve Dış Ortam", expanded=False):
     amb_temp_c = st.slider("Ortam Sıcaklığı T_amb (°C)", min_value=-20.0, max_value=55.0, value=25.0, step=1.0)
@@ -187,15 +390,25 @@ else:
 
 # --- EXECUTE SIMULATION ---
 @st.cache_data(show_spinner=False)
-def run_simulation(length, diam, thick, mat_k, rough, incline, ftype, t_in_c, p_in_bar, flow, ins_name, ins_th, t_amb, wind, use_3d, nr, nt, nz):
-    if "Saf Metan" in ftype:
+def run_simulation(
+    length, diam, thick, mat_k, rough, incline,
+    is_pure, comp_tuple,
+    inlet_t_c, p_in_bar, flow,
+    layers_tuple,
+    t_amb, wind, use_3d, nr, nt, nz
+):
+    if is_pure:
         fm = FluidManager(fluid_type="pure_methane")
     else:
-        comp = {"Methane": 0.94, "Ethane": 0.045, "Propane": 0.01, "Nitrogen": 0.005}
-        fm = FluidManager(fluid_type="mixture", composition=comp)
+        raw_comp = dict(comp_tuple)
+        tot = sum(raw_comp.values())
+        norm_comp = {k: v / tot for k, v in raw_comp.items()} if tot > 0 else {"Methane": 1.0}
+        fm = FluidManager(fluid_type="mixture", composition=norm_comp)
 
-    k_ins = INSULATION_DATA[ins_name]["k"]
-    layers = [InsulationLayer(name=ins_name, thickness_m=ins_th / 1000.0, thermal_conductivity=k_ins)]
+    layers = [
+        InsulationLayer(name=l_name, thickness_m=l_th / 1000.0, thermal_conductivity=l_k)
+        for (l_name, l_th, l_k) in layers_tuple
+    ]
     thermal_model = PipeThermalModel(
         inner_diameter_m=diam / 1000.0,
         wall_thickness_m=thick / 1000.0,
@@ -224,10 +437,13 @@ def run_simulation(length, diam, thick, mat_k, rough, incline, ftype, t_in_c, p_
         solver_1d = PipelineSolver(fluid_manager=fm, thermal_model=thermal_model, config=base_config)
         return solver_1d.solve()
 
+comp_tuple = tuple(sorted(active_composition.items()))
+layers_tuple = tuple((l["name"], l["thickness_mm"], l["k"]) for l in st.session_state["insulation_layers"])
+
 sim_results = run_simulation(
     length_m, diameter_mm, wall_thickness_mm, PIPE_MATERIALS[pipe_mat_name],
-    roughness_um, inclination_deg, fluid_type_choice, inlet_t_c, inlet_p_bar,
-    mass_flow_kg_s, ins_choice, ins_thickness_mm, amb_temp_c, wind_speed_m_s,
+    roughness_um, inclination_deg, is_pure_methane, comp_tuple, inlet_t_c, inlet_p_bar,
+    mass_flow_kg_s, layers_tuple, amb_temp_c, wind_speed_m_s,
     is_3d_mode, n_radial, n_azimuthal, n_axial
 )
 
@@ -344,7 +560,13 @@ with c5:
     """, unsafe_allow_html=True)
 
 # --- TERMINAL & MECHANICAL INTEGRITY EVALUATION ---
-fm_eval = FluidManager(fluid_type="pure_methane" if "Saf Metan" in fluid_type_choice else "mixture")
+if is_pure_methane:
+    fm_eval = FluidManager(fluid_type="pure_methane")
+else:
+    tot_c = sum(active_composition.values())
+    norm_c = {k: v / tot_c for k, v in active_composition.items()} if tot_c > 0 else {"Methane": 1.0}
+    fm_eval = FluidManager(fluid_type="mixture", composition=norm_c)
+
 latent_heat_val = fm_eval.get_latent_heat(sim_results.pressure_pa[-1])
 rho_avg = sim_results.density_kg_m3[0] if hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0 else 425.0
 

@@ -21,6 +21,10 @@ def test_charts_creation_returns_valid_plotly_figures():
     fig_p1 = create_pressure_comparison_chart(results_1d)
     assert fig_p1 is not None
     assert len(fig_p1.data) >= 2
+
+    fig_margin_1d = create_flashing_margin_chart(results_1d)
+    assert fig_margin_1d is not None
+    assert len(fig_margin_1d.data) >= 1
     
     # 3D Charts & Radial Contour Heatmap
     cfg_3d = Solver3DConfig(pipeline_config=config, n_radial=8, n_azimuthal=8, n_axial=20)
@@ -33,6 +37,10 @@ def test_charts_creation_returns_valid_plotly_figures():
     fig_t3 = create_temperature_profile_chart(results_3d)
     assert fig_t3 is not None
     assert len(fig_t3.data) >= 3  # Wall, Bulk, Center
+
+    fig_margin_3d = create_flashing_margin_chart(results_3d)
+    assert fig_margin_3d is not None
+    assert len(fig_margin_3d.data) >= 2  # Wall Margin and Bulk Margin
     
     fig_heatmap = create_radial_cross_section_heatmap(results_3d, slice_index=10)
     assert fig_heatmap is not None

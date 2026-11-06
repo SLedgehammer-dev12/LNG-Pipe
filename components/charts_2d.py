@@ -169,23 +169,45 @@ def create_temperature_profile_chart(results: Union[PipelineSimulationResults, S
     return _apply_theme(fig)
 
 
-def create_flashing_margin_chart(results: PipelineSimulationResults) -> go.Figure:
+def create_flashing_margin_chart(results: Union[PipelineSimulationResults, Simulation3DResults]) -> go.Figure:
     """Plots Flashing / Cavitation Margin (P - Psat) with zero-line safety boundary."""
     x = results.distance_m
-    margins_bar = [m / 1e5 for m in results.flashing_margin_pa]
-
     fig = go.Figure()
 
-    fig.add_trace(go.Scatter(
-        x=x,
-        y=margins_bar,
-        mode="lines",
-        name="Flaş / Kavitasyon Güvenlik Marjı (P - Psat)",
-        line=dict(color="#a371f7", width=2.5),
-        fill="tozeroy",
-        fillcolor="rgba(163, 113, 247, 0.15)",
-        hovertemplate="Güvenlik Marjı: %{y:.3f} bar<extra></extra>"
-    ))
+    if isinstance(results, Simulation3DResults):
+        wall_margin_bar = [m / 1e5 for m in results.wall_flashing_margin_pa]
+        bulk_margin_bar = [m / 1e5 for m in results.bulk_flashing_margin_pa]
+
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=wall_margin_bar,
+            mode="lines",
+            name="Çeper Güvenlik Marjı (P - Psat_wall) [Kritik]",
+            line=dict(color="#f85149", width=2.5),
+            fill="tozeroy",
+            fillcolor="rgba(248, 81, 73, 0.15)",
+            hovertemplate="Çeper Marjı: %{y:.3f} bar<extra></extra>"
+        ))
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=bulk_margin_bar,
+            mode="lines",
+            name="Yığın Güvenlik Marjı (P - Psat_bulk)",
+            line=dict(color="#3fb950", width=2.0, dash="dash"),
+            hovertemplate="Yığın Marjı: %{y:.3f} bar<extra></extra>"
+        ))
+    else:
+        margins_bar = [m / 1e5 for m in results.flashing_margin_pa]
+        fig.add_trace(go.Scatter(
+            x=x,
+            y=margins_bar,
+            mode="lines",
+            name="Flaş / Kavitasyon Güvenlik Marjı (P - Psat)",
+            line=dict(color="#a371f7", width=2.5),
+            fill="tozeroy",
+            fillcolor="rgba(163, 113, 247, 0.15)",
+            hovertemplate="Güvenlik Marjı: %{y:.3f} bar<extra></extra>"
+        ))
 
     # Zero boundary line
     fig.add_hline(

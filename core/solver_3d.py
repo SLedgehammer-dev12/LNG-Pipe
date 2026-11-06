@@ -50,6 +50,11 @@ class Simulation3DResults:
     two_phase_multiplier: List[float] = field(default_factory=list)
     density_kg_m3: List[float] = field(default_factory=list)
 
+    @property
+    def flashing_margin_pa(self) -> List[float]:
+        """Backward-compatible alias returning wall flashing margin (most conservative)."""
+        return self.wall_flashing_margin_pa
+
 
 def solve_tdma(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> np.ndarray:
     """
