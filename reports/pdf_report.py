@@ -1,0 +1,186 @@
+"""Professional PDF engineering calculation report generator for LNG pipeline flow."""
+
+import io
+from typing import Dict, Any
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
+from core.solver import PipelineSimulationResults
+
+
+def generate_pdf_report(results: PipelineSimulationResults, project_info: Dict[str, Any]) -> bytes:
+    """Generates an executive engineering calculation sheet in PDF format."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=A4,
+        rightMargin=36,
+        leftMargin=36,
+        topMargin=36,
+        bottomMargin=36
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "DocTitle",
+        parent=styles["Heading1"],
+        fontName="Helvetica-Bold",
+        fontSize=18,
+        leading=22,
+        textColor=colors.HexColor("#0f2a4a"),
+        spaceAfter=4
+    )
+    subtitle_style = ParagraphStyle(
+        "DocSubtitle",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=10,
+        textColor=colors.HexColor("#555555"),
+        spaceAfter=12
+    )
+    section_style = ParagraphStyle(
+        "SectionHeader",
+        parent=styles["Heading2"],
+        fontName="Helvetica-Bold",
+        fontSize=12,
+        leading=16,
+        textColor=colors.HexColor("#0f2a4a"),
+        spaceBefore=10,
+        spaceAfter=6
+    )
+    body_style = ParagraphStyle(
+        "BodyDark",
+        parent=styles["Normal"],
+        fontName="Helvetica",
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#222222")
+    )
+    bold_style = ParagraphStyle(
+        "BodyBold",
+        parent=styles["Normal"],
+        fontName="Helvetica-Bold",
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor("#0f2a4a")
+    )
+
+    story = []
+
+    # Title & Metadata
+    proj_name = project_info.get("project_name", "LNG Pipeline Flow Simulation")
+    tag_id = project_info.get("tag_id", "LNG-PL-001")
+    engineer = project_info.get("engineer_name", "Kıdemli Proses Mühendisi")
+    date_str = project_info.get("date_str", "2026-11-06")
+
+    story.append(Paragraph(f"<b>{proj_name}</b>", title_style))
+    story.append(Paragraph(f"Ekipman Etiketi: {tag_id} | Mühendis: {engineer} | Tarih: {date_str}", subtitle_style))
+    story.append(HRFlowable(width="100%", thickness=1.5, color=colors.HexColor("#0f2a4a"), spaceAfter=12))
+
+    # Executive Status Banner
+    flashed = results.has_flashed
+    banner_color = colors.HexColor("#d9383a") if flashed else colors.HexColor("#28a745")
+    status_text = (
+        f"DİKKAT: Boru boyunca {results.flashing_point_m:.1f} m noktasında Flaş / Kaynama Başlangıcı tespit edildi!"
+        if flashed else
+        "UYGUNDUR: Tüm boru hattı boyunca sıvı tek faz korunmuş olup buharlaşma / kavitasyon riski bulunmamaktadır."
+    )
+    banner_data = [[Paragraph(f"<b>DURUM: {status_text}</b>", ParagraphStyle("Banner", parent=body_style, textColor=colors.white))]]
+    banner_table = Table(banner_data, colWidths=[520])
+    banner_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), banner_color),
+        ("PADDING", (0, 0), (-1, -1), 8),
+        ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+    ]))
+    story.append(banner_table)
+    story.append(Spacer(1, 10))
+
+    # 1. Pipeline Design Inputs
+    story.append(Paragraph("1. Tasarım Girdileri ve Hat Özellikleri", section_style))
+    cfg = results.config
+    inputs_data = [
+        [Paragraph("Hat Uzunluğu (L)", bold_style), Paragraph(f"{cfg.length_m:.1f} m", body_style),
+         Paragraph("İç Çap (ID)", bold_style), Paragraph(f"{cfg.inner_diameter_m * 1000.0:.1f} mm", body_style)],
+        [Paragraph("Eğim Açısı", bold_style), Paragraph(f"{cfg.inclination_deg:.1f}°", body_style),
+         Paragraph("Mutlak Pürüzlülük", bold_style), Paragraph(f"{cfg.roughness_m * 1e6:.1f} µm", body_style)],
+        [Paragraph("Giriş Sıcaklığı (T_in)", bold_style), Paragraph(f"{cfg.inlet_temperature_k - 273.15:.2f} °C ({cfg.inlet_temperature_k:.2f} K)", body_style),
+         Paragraph("Giriş Basıncı (P_in)", bold_style), Paragraph(f"{cfg.inlet_pressure_pa / 1e5:.3f} bar", body_style)],
+        [Paragraph("Kütlesel Debi", bold_style), Paragraph(f"{cfg.mass_flow_rate_kg_s:.2f} kg/s ({cfg.mass_flow_rate_kg_s * 3.6:.1f} t/h)", body_style),
+         Paragraph("Akış Hızı (Giriş)", bold_style), Paragraph(f"{results.velocity_m_s[0]:.2f} m/s", body_style)],
+    ]
+    inputs_table = Table(inputs_data, colWidths=[130, 130, 130, 130])
+    inputs_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8f9fa")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(inputs_table)
+    story.append(Spacer(1, 10))
+
+    # 2. Key Calculation Results
+    story.append(Paragraph("2. Termal ve Hidrolik Hesaplama Sonuçları", section_style))
+    results_data = [
+        [Paragraph("Çıkış Sıcaklığı (T_out)", bold_style), Paragraph(f"{results.outlet_temperature_k - 273.15:.2f} °C", body_style),
+         Paragraph("Sıcaklık Artışı (ΔT)", bold_style), Paragraph(f"{results.outlet_temperature_k - cfg.inlet_temperature_k:.2f} °C", body_style)],
+        [Paragraph("Çıkış Statik Basıncı (P_out)", bold_style), Paragraph(f"{results.outlet_pressure_pa / 1e5:.3f} bar", body_style),
+         Paragraph("Toplam Basınç Düşüşü (ΔP)", bold_style), Paragraph(f"{results.total_pressure_drop_pa / 1e5:.3f} bar", body_style)],
+        [Paragraph("Çıkış Buhar Basıncı (Psat)", bold_style), Paragraph(f"{results.outlet_vapor_pressure_pa / 1e5:.3f} bar", body_style),
+         Paragraph("Buhar Basıncı Artışı (ΔPsat)", bold_style), Paragraph(f"{(results.outlet_vapor_pressure_pa - results.inlet_vapor_pressure_pa) / 1e5:.3f} bar", body_style)],
+        [Paragraph("Min. Kavitasyon/Flaş Marjı", bold_style), Paragraph(f"{results.min_flashing_margin_pa / 1e5:.3f} bar", body_style),
+         Paragraph("Toplam Isı Girişi (Q_tot)", bold_style), Paragraph(f"{results.total_heat_ingress_w / 1000.0:.2f} kW ({results.total_heat_ingress_w / cfg.length_m:.1f} W/m)", body_style)],
+    ]
+    results_table = Table(results_data, colWidths=[130, 130, 130, 130])
+    results_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#ffffff")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(results_table)
+    story.append(Spacer(1, 10))
+
+    # 3. Standards & Engineering Compliance Checks (ASME B31.3 / EN 1473)
+    story.append(Paragraph("3. Mühendislik Standartları ve Güvenlik Denetimleri (ASME B31.3 / EN 1473)", section_style))
+    v_in = results.velocity_m_s[0]
+    v_out = results.velocity_m_s[-1]
+    
+    # Velocity bounds: 0.5 m/s to 4.5 m/s
+    v_status = "UYGUN" if (0.5 <= v_out <= 4.5) else "UYARI"
+    v_msg = f"Akış hızı ({v_out:.2f} m/s) tavsiye edilen 0.5 - 4.5 m/s aralığındadır (Tabakalaşma ve elektrostatik riskleri önler)." if v_status == "UYGUN" else f"Akış hızı ({v_out:.2f} m/s) tavsiye edilen aralığın dışındadır."
+
+    # NPSH / Flashing margin: at least 0.5 bar
+    margin_bar = results.min_flashing_margin_pa / 1e5
+    m_status = "UYGUN" if margin_bar >= 0.5 else ("DİKKAT" if margin_bar > 0.0 else "KRİTİK")
+    m_msg = f"Minimum güvenlik marjı ({margin_bar:.2f} bar) ≥ 0.5 bar tavsiyesini karşılamaktadır." if m_status == "UYGUN" else f"Güvenlik marjı ({margin_bar:.2f} bar) düşüktür veya kaynama başlamıştır."
+
+    checks_data = [
+        [Paragraph("Kontrol Parametresi", bold_style), Paragraph("Standart / Tavsiye", bold_style), Paragraph("Değerlendirme", bold_style), Paragraph("Sonuç", bold_style)],
+        [Paragraph("Akış Hızı Sınırı", body_style), Paragraph("0.5 - 4.5 m/s (EN 1473)", body_style), Paragraph(v_msg, body_style), Paragraph(f"<b>{v_status}</b>", body_style)],
+        [Paragraph("Kavitasyon / Flaş Marjı", body_style), Paragraph("P - Psat ≥ 0.5 bar", body_style), Paragraph(m_msg, body_style), Paragraph(f"<b>{m_status}</b>", body_style)],
+        [Paragraph("Faz Değişimi Riski", body_style), Paragraph("Buharlaşma = 0 (Tek Faz)", body_style), Paragraph("Çıkışa kadar tam sıvı faz sağlanmalıdır." if not flashed else "Boru içinde 2 fazlı buhar kabarcıkları oluşmuştur.", body_style), Paragraph("<b>UYGUN</b>" if not flashed else "<b>KAYNAMA</b>", body_style)]
+    ]
+    checks_table = Table(checks_data, colWidths=[110, 110, 230, 70])
+    checks_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f2a4a")),
+        ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(checks_table)
+    story.append(Spacer(1, 20))
+
+    # Signature / Approval Block
+    sig_data = [
+        [Paragraph("Hesaplayan / Hazırlayan:", body_style), Paragraph("Kontrol Eden / Onaylayan:", body_style)],
+        [Paragraph(f"İmza: ____________________<br/>Tarih: {date_str}", body_style), Paragraph("İmza: ____________________<br/>Tarih: _______________", body_style)]
+    ]
+    sig_table = Table(sig_data, colWidths=[260, 260])
+    sig_table.setStyle(TableStyle([
+        ("LINEBEFORE", (1, 0), (1, -1), 0.5, colors.HexColor("#cccccc")),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(sig_table)
+
+    doc.build(story)
+    return buffer.getvalue()
