@@ -138,3 +138,42 @@ class FluidManager:
         )
         self._cache[cache_key] = props
         return props
+
+    def get_latent_heat(self, P: float) -> float:
+        """Calculate latent heat of vaporization h_fg (J/kg) at saturation pressure P (Pa)."""
+        P_clamped = max(50000.0, min(P, 4.2e6))
+        try:
+            h_liq = float(CP.PropsSI("H", "P", P_clamped, "Q", 0, self._backend_string))
+            h_vap = float(CP.PropsSI("H", "P", P_clamped, "Q", 1, self._backend_string))
+            diff = h_vap - h_liq
+            if diff > 100000.0:
+                return float(diff)
+        except Exception:
+            pass
+
+        # Robust Watson correlation fallback for methane/LNG
+        Tc = 190.56
+        T_sat = 111.66 * ((P_clamped / 101325.0) ** 0.11)
+        tau = max(1e-4, 1.0 - (T_sat / Tc))
+        return float(510500.0 * ((tau / (1.0 - 111.66 / Tc)) ** 0.38))
+
+    def get_bubble_dew_temperature(self, P: float) -> tuple[float, float]:
+        """Returns (T_bubble, T_dew) in K for fluid at pressure P (Pa)."""
+        P_clamped = max(50000.0, min(P, 4.2e6))
+        try:
+            t_bubble = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, self._backend_string))
+            t_dew = float(CP.PropsSI("T", "P", P_clamped, "Q", 1, self._backend_string))
+            if math.isnan(t_bubble) or math.isnan(t_dew):
+                raise ValueError("CoolProp returned NaN")
+            return float(t_bubble), float(t_dew)
+        except Exception:
+            pass
+
+        try:
+            t_sat = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, "Methane"))
+        except Exception:
+            t_sat = 111.66 * ((P_clamped / 101325.0) ** 0.11)
+
+        glide = 1.8 if self.fluid_type != "pure_methane" else 0.0
+        return float(t_sat), float(t_sat + glide)
+

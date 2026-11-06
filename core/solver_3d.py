@@ -8,6 +8,7 @@ import numpy as np
 from core.fluids import FluidManager, FluidProperties
 from core.heat_transfer import PipeThermalModel
 from core.solver import PipelineSimulationConfig, calculate_churchill_friction_factor
+from core.two_phase import calculate_two_phase_flashing
 
 
 @dataclass
@@ -45,6 +46,9 @@ class Simulation3DResults:
     has_wall_flashed: bool = False
     wall_flashing_point_m: Optional[float] = None
     min_flashing_margin_pa: float = 0.0
+    void_fraction: List[float] = field(default_factory=list)
+    two_phase_multiplier: List[float] = field(default_factory=list)
+    density_kg_m3: List[float] = field(default_factory=list)
 
 
 def solve_tdma(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> np.ndarray:
@@ -199,6 +203,9 @@ class PipelineSolver3D:
             margin_bulk = curr_p - p_sat_bulk
             margin_wall = curr_p - p_sat_wall
 
+            props_station = self.fm.get_properties(t_bulk, curr_p)
+            results.density_kg_m3.append(props_station.density)
+
             results.bulk_temperature_k.append(t_bulk)
             results.center_temperature_k.append(t_center)
             results.wall_temperature_k.append(t_wall)
@@ -215,6 +222,28 @@ class PipelineSolver3D:
                 results.has_wall_flashed = True
                 results.wall_flashing_point_m = round(curr_x, 2)
 
+            if margin_wall <= 0.0:
+                h_fg = self.fm.get_latent_heat(curr_p)
+                t_sat, _ = self.fm.get_bubble_dew_temperature(curr_p)
+                delta_t_superheat = max(0.0, t_wall - t_sat)
+                props_bulk = self.fm.get_properties(t_bulk, curr_p)
+                vapor_quality = min(0.99, (props_bulk.specific_heat * delta_t_superheat) / max(h_fg, 1e4))
+                # Saturated vapor properties for Lockhart-Martinelli (M_methane = 0.01604 kg/mol)
+                rho_v = max(0.1, 0.01604 * curr_p / (8.314 * max(t_wall, 100.0)))
+                alpha, phi_l_sq, _ = calculate_two_phase_flashing(
+                    vapor_quality=vapor_quality,
+                    liquid_density=props_bulk.density,
+                    vapor_density=rho_v,
+                    liquid_viscosity=props_bulk.viscosity,
+                    vapor_viscosity=8.0e-6
+                )
+            else:
+                alpha = 0.0
+                phi_l_sq = 1.0
+
+            results.void_fraction.append(alpha)
+            results.two_phase_multiplier.append(phi_l_sq)
+
             if k_idx < nz:
                 props = self.fm.get_properties(t_bulk, curr_p)
                 q_prime_total, _ = self.thermal_model.calculate_heat_ingress(props, pipe_cfg.mass_flow_rate_kg_s)
@@ -228,7 +257,7 @@ class PipelineSolver3D:
                 g_in_sec = g_in / nt
                 g_out_sec = g_out / nt
 
-                # Build TDMA tridiagonal matrices
+                # Build TDMA tridiagonal matrices (hoisted outside sector loop)
                 sub_diag = -g_in_sec[1:]
                 main_diag = np.zeros(nr)
                 super_diag = -g_out_sec[:-1]
@@ -236,24 +265,22 @@ class PipelineSolver3D:
                 for i in range(nr):
                     main_diag[i] = c_cap[i] + g_in_sec[i] + g_out_sec[i]
 
+                a_mat = np.zeros(nr)
+                a_mat[1:] = sub_diag
+                b_mat = np.copy(main_diag)
+                c_mat = np.zeros(nr)
+                c_mat[:-1] = super_diag
+
                 # Advance each sector
                 for j in range(nt):
                     rhs = c_cap * slice_t[:, j]
                     rhs[-1] += q_sector_wall  # Wall heat ingress in outer ring
-                    
-                    # Pad sub_diag for Thomas solver
-                    a_mat = np.zeros(nr)
-                    a_mat[1:] = sub_diag
-                    b_mat = np.copy(main_diag)
-                    c_mat = np.zeros(nr)
-                    c_mat[:-1] = super_diag
-
                     temp_field[k_idx + 1, :, j] = solve_tdma(a_mat, b_mat, c_mat, rhs)
 
                 # Hydraulic pressure drop update
                 re_local = (props.density * v_mean * pipe_cfg.inner_diameter_m) / props.viscosity
                 f_local = calculate_churchill_friction_factor(re_local, rel_roughness)
-                dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * props.density * (v_mean ** 2))
+                dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * props.density * (v_mean ** 2)) * phi_l_sq
                 dp_hydro = props.density * g * sin_incline * dz
                 curr_p = max(1000.0, curr_p - dp_fric - dp_hydro)
 

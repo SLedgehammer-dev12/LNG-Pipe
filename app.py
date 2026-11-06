@@ -17,6 +17,13 @@ from components.charts_2d import (
 from components.pipe_3d_viewer import generate_3d_pipe_html
 from components.pipeline_schematic_2d import generate_schematic_2d_html
 from components.terminal_3d_viewer import generate_terminal_3d_html
+from core.terminal_ops import evaluate_terminal_operations
+from core.mechanics import (
+    PipelineSpecification,
+    calculate_asme_b31_3_thickness,
+    calculate_thermal_contraction_and_omega_loop,
+    calculate_joukowsky_surge,
+)
 from reports.pdf_report import generate_pdf_report
 
 st.set_page_config(
@@ -162,6 +169,11 @@ with st.sidebar.expander("🛡️ Kriyojenik İzolasyon Katmanı", expanded=True
 with st.sidebar.expander("☀️ Çevre ve Dış Ortam", expanded=False):
     amb_temp_c = st.slider("Ortam Sıcaklığı T_amb (°C)", min_value=-20.0, max_value=55.0, value=25.0, step=1.0)
     wind_speed_m_s = st.slider("Rüzgar Hızı (m/s)", min_value=0.5, max_value=30.0, value=3.0, step=0.5)
+
+with st.sidebar.expander("📐 ASME B31.3 & Vana Kapanma (Surge)", expanded=False):
+    design_p_bar = st.number_input("Tasarım Basıncı P_design (bar)", min_value=2.0, max_value=100.0, value=20.0, step=2.0)
+    valve_closure_time_s = st.slider("ESDV-101 Vana Kapanma Süresi (s)", min_value=0.5, max_value=30.0, value=15.0, step=0.5, help="SIGTTO tavsiyesi: Akustik koç darbesini önlemek için t >= 15-20 s")
+    anchor_dist_m = st.number_input("Sabit Mesnet Aralığı (m)", min_value=20.0, max_value=500.0, value=min(float(length_m), 180.0), step=10.0)
 
 if is_3d_mode:
     with st.sidebar.expander("🌐 3D Sayısal Izgara Çözünürlüğü", expanded=False):
@@ -331,6 +343,48 @@ with c5:
     </div>
     """, unsafe_allow_html=True)
 
+# --- TERMINAL & MECHANICAL INTEGRITY EVALUATION ---
+fm_eval = FluidManager(fluid_type="pure_methane" if "Saf Metan" in fluid_type_choice else "mixture")
+latent_heat_val = fm_eval.get_latent_heat(sim_results.pressure_pa[-1])
+rho_avg = sim_results.density_kg_m3[0] if hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0 else 425.0
+
+terminal_ops = evaluate_terminal_operations(
+    total_heat_w=sim_results.total_heat_ingress_w,
+    length_m=length_m,
+    inner_diam_m=diameter_mm / 1000.0,
+    fluid_density=rho_avg,
+    specific_heat=3480.0,
+    latent_heat=latent_heat_val,
+    delta_t_allowable=1.5,
+    pressure_drop_pa=sim_results.total_pressure_drop_pa
+)
+
+d_outer_m = (diameter_mm + 2.0 * wall_thickness_mm) / 1000.0
+pipe_spec = PipelineSpecification(
+    outer_diameter_m=d_outer_m,
+    design_pressure_pa=design_p_bar * 1e5,
+    operating_pressure_pa=inlet_p_bar * 1e5,
+    pipeline_length_m=length_m,
+    fluid_density_kg_m3=rho_avg
+)
+asme_mech = calculate_asme_b31_3_thickness(pipe_spec)
+v_nom = mass_flow_kg_s / (rho_avg * (np.pi * (diameter_mm / 2000.0) ** 2))
+surge_mech = calculate_joukowsky_surge(pipe_spec, v_nom, valve_closure_time_s, wall_thickness_mm / 1000.0)
+omega_mech = calculate_thermal_contraction_and_omega_loop(pipe_spec, anchor_distance_m=anchor_dist_m, outer_diameter_m=d_outer_m)
+
+with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik Doğrulama", expanded=True):
+    col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+    with col_t1:
+        st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{terminal_ops.bog_rate_kg_h:.1f} kg/h</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
+    with col_t2:
+        st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} m)</span>", unsafe_allow_html=True)
+    with col_t3:
+        t_ok = wall_thickness_mm >= asme_mech["t_required_min_mm"]
+        st.markdown(f"**ASME B31.3 Et Kalınlığı:**<br/><span style='color:{'#3fb950' if t_ok else '#f85149'}; font-size:16px; font-weight:700;'>t_req = {asme_mech['t_required_min_mm']:.2f} mm</span><br/><span style='color:#8b949e; font-size:12px;'>Mevcut: {wall_thickness_mm:.1f} mm ({'✓ UYGUN' if t_ok else '⚠️ YETERSİZ'}) | P_test: {asme_mech['hydrostatic_test_pressure_bar']:.1f} bar</span>", unsafe_allow_html=True)
+    with col_t4:
+        surge_safe = surge_mech["actual_surge_bar"] < 5.0
+        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#d29922'}; font-size:16px; font-weight:700;'>+{surge_mech['actual_surge_bar']:.2f} bar</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {surge_mech['peak_line_pressure_bar']:.1f} bar (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
+
 # --- VIEW TABS ---
 tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([
     "🗺️ Terminal Hat Şematiği (2D P&ID)",
@@ -393,6 +447,9 @@ with tab_table:
             "Çeper Güvenlik Marjı (bar)": [round(m / 1e5, 3) for m in sim_results.wall_flashing_margin_pa],
             "Yığın Güvenlik Marjı (bar)": [round(m / 1e5, 3) for m in sim_results.bulk_flashing_margin_pa]
         }
+        if hasattr(sim_results, "void_fraction") and len(sim_results.void_fraction) == len(sim_results.distance_m):
+            df_data["Buhar Boşluk Kesri (α)"] = [round(a, 4) for a in sim_results.void_fraction]
+            df_data["İki Fazlı Sürtünme Çarpanı (Φ²)"] = [round(phi, 2) for phi in sim_results.two_phase_multiplier]
     else:
         df_data = {
             "Mesafe (m)": sim_results.distance_m,
@@ -405,6 +462,9 @@ with tab_table:
             "Reynolds": [int(r) for r in sim_results.reynolds],
             "Isı Akısı (W/m)": [round(q, 1) for q in sim_results.heat_ingress_w_m]
         }
+        if hasattr(sim_results, "void_fraction") and len(sim_results.void_fraction) == len(sim_results.distance_m):
+            df_data["Buhar Boşluk Kesri (α)"] = [round(a, 4) for a in sim_results.void_fraction]
+            df_data["İki Fazlı Sürtünme Çarpanı (Φ²)"] = [round(phi, 2) for phi in sim_results.two_phase_multiplier]
     df = pd.DataFrame(df_data)
     st.dataframe(df, use_container_width=True, height=450)
     

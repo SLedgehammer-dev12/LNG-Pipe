@@ -9,6 +9,13 @@ from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults
+from core.terminal_ops import evaluate_terminal_operations
+from core.mechanics import (
+    PipelineSpecification,
+    calculate_asme_b31_3_thickness,
+    calculate_thermal_contraction_and_omega_loop,
+    calculate_joukowsky_surge,
+)
 
 
 def generate_pdf_report(results, project_info: Dict[str, Any]) -> bytes:
@@ -187,7 +194,50 @@ def generate_pdf_report(results, project_info: Dict[str, Any]) -> bytes:
         ("PADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(checks_table)
-    story.append(Spacer(1, 20))
+    story.append(Spacer(1, 10))
+
+    # 4. Terminal Operations & Cryogenic Mechanical Integrity (BOG, ASME B31.3, Surge)
+    story.append(Paragraph("4. Terminal Operasyonları ve Kriyojenik Mekanik Doğrulama (BOG, ASME B31.3 & Surge)", section_style))
+
+    # Evaluate using robust core domain modules
+    rho_eval = results.density_kg_m3[0] if (hasattr(results, "density_kg_m3") and len(results.density_kg_m3) > 0) else 425.0
+    t_ops = evaluate_terminal_operations(
+        total_heat_w=results.total_heat_ingress_w,
+        length_m=cfg.length_m,
+        inner_diam_m=cfg.inner_diameter_m,
+        fluid_density=rho_eval,
+        specific_heat=3480.0,
+        latent_heat=510500.0,
+        delta_t_allowable=1.5,
+        pressure_drop_pa=results.total_pressure_drop_pa
+    )
+
+    d_out_eval = cfg.inner_diameter_m + 0.012  # Nominal pipe outer diameter estimation
+    spec_eval = PipelineSpecification(
+        outer_diameter_m=d_out_eval,
+        design_pressure_pa=max(cfg.inlet_pressure_pa * 1.5, 2.0e6),
+        operating_pressure_pa=cfg.inlet_pressure_pa,
+        pipeline_length_m=cfg.length_m,
+        fluid_density_kg_m3=rho_eval
+    )
+    asme_eval = calculate_asme_b31_3_thickness(spec_eval)
+    omega_eval = calculate_thermal_contraction_and_omega_loop(spec_eval, anchor_distance_m=min(cfg.length_m, 200.0), outer_diameter_m=d_out_eval)
+    surge_eval = calculate_joukowsky_surge(spec_eval, v_in, valve_closure_time_s=15.0, wall_thickness_m=0.006)
+
+    terminal_data = [
+        [Paragraph("Statik Hat BOG Üretim Hızı", bold_style), Paragraph(f"{t_ops.bog_rate_kg_h:.1f} kg/saat ({t_ops.bog_rate_nm3_h:.1f} Nm³/saat)", body_style),
+         Paragraph("Min. Cooldown Sirkülasyon Debisi", bold_style), Paragraph(f"{t_ops.recirc_min_flow_m3_h:.1f} m³/saat (P-201: {t_ops.recirc_pump_power_kw:.1f} kW)", body_style)],
+        [Paragraph("Hat Isıl Büzülme Miktarı (ΔL)", bold_style), Paragraph(f"{omega_eval['contraction_rate_mm_per_m']:.2f} mm/m ({omega_eval['total_line_contraction_m']:.2f} m/km)", body_style),
+         Paragraph("ESDV Kapanma Koç Darbesi (15s)", bold_style), Paragraph(f"+{surge_eval['actual_surge_bar']:.2f} bar (P_peak: {surge_eval['peak_line_pressure_bar']:.1f} bar)", body_style)]
+    ]
+    terminal_table = Table(terminal_data, colWidths=[130, 130, 130, 130])
+    terminal_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f8f9fa")),
+        ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+        ("PADDING", (0, 0), (-1, -1), 5),
+    ]))
+    story.append(terminal_table)
+    story.append(Spacer(1, 15))
 
     # Signature / Approval Block
     sig_data = [
