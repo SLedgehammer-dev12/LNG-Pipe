@@ -15,6 +15,8 @@ from components.charts_2d import (
     create_radial_cross_section_heatmap,
 )
 from components.pipe_3d_viewer import generate_3d_pipe_html
+from components.pipeline_schematic_2d import generate_schematic_2d_html
+from components.terminal_3d_viewer import generate_terminal_3d_html
 from reports.pdf_report import generate_pdf_report
 
 st.set_page_config(
@@ -330,20 +332,34 @@ with c5:
     """, unsafe_allow_html=True)
 
 # --- VIEW TABS ---
-tab1, tab2, tab3, tab4 = st.tabs([
-    "🌐 3D İnteraktif Boru Simülatörü",
+tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([
+    "🗺️ Terminal Hat Şematiği (2D P&ID)",
+    "⚓ 3D Terminal Dijital İkiz (Three.js)",
+    "🔍 3D Boru Kesiti & İzolasyon",
     "📊 2D Termo-Hidrolik Grafikler & Flaş Analizi",
     "📋 Dilim Bazlı Sayısal Tablo",
     "📑 Profesyonel Raporlama (PDF)"
 ])
 
-with tab1:
+with tab_schematic:
+    st.markdown("##### 🗺️ İskele (Jetty) - Kara Tankı Transfer & Sirkülasyon Şematiği (P&ID)")
+    st.caption("LUP dolfeninden kara depolama tankına ve sirkülasyon pompası (P-201) ile geri dönüş hattına kadar tüm proses hattını inceleyin. Ekipman detayları için üzerlerine tıklayın.")
+    html_schematic_2d = generate_schematic_2d_html(sim_results, height_px=620)
+    st.components.v1.html(html_schematic_2d, height=640, scrolling=False)
+
+with tab_3d_terminal:
+    st.markdown("##### ⚓ 3D Terminal Sahası & Boru Köprüsü Dijital İkizi (Three.js)")
+    st.caption("Açık deniz LUP dolfeni, yanaşmış LNG gemisi, APD dolfenleri, 3D Omega termal genleşme döngüleri, kara tankı ve sirkülasyon pompasını 3D uzayda serbestçe gezin.")
+    html_terminal_3d = generate_terminal_3d_html(sim_results, height_px=640)
+    st.components.v1.html(html_terminal_3d, height=660, scrolling=False)
+
+with tab_3d_pipe:
     st.markdown("##### 🔍 3D Three.js Kriyojenik Kesitli Boru Görselleştirici")
     st.caption("Sol tık ile döndürün, sağ tık ile kaydırın, fare tekerleğiyle yakınlaşın. 180° Kesit ile iç sıvı çekirdeği ve izolasyon katmanlarını inceleyin.")
     html_3d = generate_3d_pipe_html(sim_results, height_px=560)
     st.components.v1.html(html_3d, height=580, scrolling=False)
 
-with tab2:
+with tab_charts:
     st.markdown("##### 📈 2D Dinamik Termodinamik & Hidrolik Eğriler")
     
     col_chart_top_1, col_chart_top_2 = st.columns(2)
@@ -363,7 +379,7 @@ with tab2:
         else:
             st.info("💡 Boru içi 2D radyal enine kesit sıcaklık konturu (T(r, θ)) için sol panelden '3D Sonlu Hacimler' modunu seçebilirsiniz.")
 
-with tab3:
+with tab_table:
     st.markdown("##### 📋 Hat Boyunca Sonlu Hacim Hücre Verileri")
     if is_3d_mode:
         df_data = {
@@ -400,7 +416,7 @@ with tab3:
         mime="text/csv"
     )
 
-with tab4:
+with tab_report:
     st.markdown("##### 📑 Profesyonel Mühendislik Hesaplama Raporu (PDF)")
     
     col_rep_1, col_rep_2 = st.columns(2)

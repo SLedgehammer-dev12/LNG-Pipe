@@ -45,3 +45,27 @@ _Avoid_: Film thickness, surface layer
 **Wall Flashing (Near-Wall Nucleation)**:
 Localized vaporization initiated at the inner pipe surface where fluid temperature $T(r=R, \theta, z)$ is highest, before bulk core saturation is reached.
 _Avoid_: Surface cavitation, bubble creep
+
+**LUP Dolfeni / Platformu (Loading/Unloading Platform)**:
+The central marine berthing platform supporting the Marine Loading Arms (MLA), quick couplers (QCDC/PERC), and jetty ESD valves for transferring LNG between ship and shore.
+_Avoid_: Pier head, dock platform
+
+**APD Dolfenleri (Approach / Access Platform Dolphins)**:
+Fixed pile marine substructures supporting the pipe rack and access roadway along the approach trestle between the jetty head and the shoreline.
+_Avoid_: Piles, trestle legs
+
+**Omega Genleşme Döngüsü ($\Omega$-Loop / Expansion Loop)**:
+U- or $\Omega$-shaped pipe geometry resting on dedicated expansion dolphins, sized to absorb the massive thermal contraction (~3 mm/m, several meters overall) of stainless steel lines cooled from ambient to $-161^\circ\text{C}$.
+_Avoid_: Pipe bend, elbow junction
+
+**Kara LNG Depolama Tankı (Full-Containment Cryogenic Tank)**:
+Onshore double-walled cryogenic containment vessel (inner 9% Ni steel tank and outer pre-stressed concrete wall) storing LNG at atmospheric pressure.
+_Avoid_: Storage silo, pressure sphere
+
+**Kriyojenik Sirkülasyon / Soğutma Döngüsü (Cooldown / Recirculation Loop)**:
+Continuous flow circuit that pumps subcooled LNG from the onshore tank through the transfer lines and back to the jetty during standby, maintaining the lines at $-161^\circ\text{C}$ to prevent thermal shock and vapor pocket formation.
+_Avoid_: Return pipe, bypass line
+
+**Thermal Relief Valve (TRV)**:
+Spring-loaded safety relief valve installed between every set of isolation valves to prevent hydraulic explosion from trapped cryogenic liquid expanding as it warms.
+_Avoid_: Pressure limiter, vent valve
