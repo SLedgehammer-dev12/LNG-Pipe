@@ -5,7 +5,7 @@ from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults
 
 
-def generate_3d_pipe_html(results, height_px: int = 560) -> str:
+def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C", press_unit: str = "bar") -> str:
     """Generates a self-contained responsive Three.js 3D WebGL pipeline cutaway visualizer."""
 
     if isinstance(results, Simulation3DResults):
@@ -21,12 +21,14 @@ def generate_3d_pipe_html(results, height_px: int = 560) -> str:
         flashed = results.has_flashed
         flash_point = results.flashing_point_m or 0.0
 
-    inlet_t_c = cfg.inlet_temperature_k - 273.15
-    outlet_t_c = outlet_t_k - 273.15
-    inlet_p_bar = cfg.inlet_pressure_pa / 1e5
-    outlet_p_bar = results.pressure_pa[-1] / 1e5
-    outlet_psat_bar = outlet_psat_pa / 1e5
-    min_margin_bar = results.min_flashing_margin_pa / 1e5
+    # Convert to display units
+    from core.units import from_si, delta_from_si
+    inlet_t_d = from_si("temperature", cfg.inlet_temperature_k, temp_unit)
+    outlet_t_d = from_si("temperature", outlet_t_k, temp_unit)
+    inlet_p_d = from_si("pressure", cfg.inlet_pressure_pa, press_unit)
+    outlet_p_d = from_si("pressure", results.pressure_pa[-1], press_unit)
+    outlet_psat_d = from_si("pressure", outlet_psat_pa, press_unit)
+    min_margin_d = from_si("pressure", results.min_flashing_margin_pa, press_unit)
     flash_ratio = (flash_point / cfg.length_m) if cfg.length_m > 0 else 0.0
 
     # Build telemetry data payload for client-side JS
@@ -34,16 +36,18 @@ def generate_3d_pipe_html(results, height_px: int = 560) -> str:
         "length_m": cfg.length_m,
         "diameter_mm": cfg.inner_diameter_m * 1000.0,
         "mass_flow": cfg.mass_flow_rate_kg_s,
-        "inlet_t_c": round(inlet_t_c, 2),
-        "outlet_t_c": round(outlet_t_c, 2),
-        "inlet_p_bar": round(inlet_p_bar, 3),
-        "outlet_p_bar": round(outlet_p_bar, 3),
-        "outlet_psat_bar": round(outlet_psat_bar, 3),
-        "min_margin_bar": round(min_margin_bar, 3),
+        "inlet_t": round(inlet_t_d, 2),
+        "outlet_t": round(outlet_t_d, 2),
+        "inlet_p": round(inlet_p_d, 3),
+        "outlet_p": round(outlet_p_d, 3),
+        "outlet_psat": round(outlet_psat_d, 3),
+        "min_margin": round(min_margin_d, 3),
         "has_flashed": flashed,
         "flash_point_m": round(flash_point, 1),
         "flash_ratio": round(flash_ratio, 3),
         "heat_ingress_kw": round(results.total_heat_ingress_w / 1000.0, 2),
+        "temp_unit": temp_unit,
+        "press_unit": press_unit,
     }
 
     html = f"""
@@ -188,11 +192,11 @@ def generate_3d_pipe_html(results, height_px: int = 560) -> str:
   <div id="canvas-container">
     <div class="hud-panel">
       <div class="hud-title">⚡ LNG Boru Akış Telemetrisi</div>
-      <div class="hud-row"><span>Giriş Sıcaklığı:</span><span class="hud-val">{inlet_t_c:.1f} °C</span></div>
-      <div class="hud-row"><span>Çıkış Sıcaklığı:</span><span class="hud-val">{outlet_t_c:.1f} °C</span></div>
-      <div class="hud-row"><span>Toplam Basınç:</span><span class="hud-val">{outlet_p_bar:.2f} bar</span></div>
-      <div class="hud-row"><span>Doyma Buhar Basıncı:</span><span class="hud-val">{outlet_psat_bar:.2f} bar</span></div>
-      <div class="hud-row"><span>Güvenlik Marjı:</span><span class="hud-val">{min_margin_bar:.2f} bar</span></div>
+      <div class="hud-row"><span>Giriş Sıcaklığı:</span><span class="hud-val">{telemetry['inlet_t']:.1f} {telemetry['temp_unit']}</span></div>
+      <div class="hud-row"><span>Çıkış Sıcaklığı:</span><span class="hud-val">{telemetry['outlet_t']:.1f} {telemetry['temp_unit']}</span></div>
+      <div class="hud-row"><span>Toplam Basınç:</span><span class="hud-val">{telemetry['outlet_p']:.2f} {telemetry['press_unit']}</span></div>
+      <div class="hud-row"><span>Doyma Buhar Basıncı:</span><span class="hud-val">{telemetry['outlet_psat']:.2f} {telemetry['press_unit']}</span></div>
+      <div class="hud-row"><span>Güvenlik Marjı:</span><span class="hud-val">{telemetry['min_margin']:.2f} {telemetry['press_unit']}</span></div>
       <div class="hud-row"><span>Toplam Isı Girişi:</span><span class="hud-val">{telemetry['heat_ingress_kw']} kW</span></div>
       {"<div class='status-badge status-safe'>✓ TEK FAZ SIVI AKIŞ (GÜVENLİ)</div>" if not flashed else f"<div class='status-badge status-alert'>⚠️ FLAŞ / KAYNAMA UYARISI ({flash_point:.1f} m)</div>"}
     </div>

@@ -796,7 +796,7 @@ tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report =
 with tab_schematic:
     st.markdown("##### 🗺️ İskele (Jetty) - Kara Tankı Transfer & Sirkülasyon Şematiği (P&ID)")
     st.caption("LUP dolfeninden kara depolama tankına ve sirkülasyon pompası (P-201) ile geri dönüş hattına kadar tüm proses hattını inceleyin. Ekipman detayları için üzerlerine tıklayın.")
-    html_schematic_2d = generate_schematic_2d_html(sim_results, height_px=620, length_m=length_m, anchor_dist_m=anchor_dist_m)
+    html_schematic_2d = generate_schematic_2d_html(sim_results, height_px=620, length_m=length_m, anchor_dist_m=anchor_dist_m, temp_unit=t_unit, press_unit=p_unit)
     st.components.v1.html(html_schematic_2d, height=640, scrolling=False)
 
 with tab_3d_terminal:
@@ -822,7 +822,7 @@ with tab_3d_terminal:
 with tab_3d_pipe:
     st.markdown("##### 🔍 3D Three.js Kriyojenik Kesitli Boru Görselleştirici")
     st.caption("Sol tık ile döndürün, sağ tık ile kaydırın, fare tekerleğiyle yakınlaşın. 180° Kesit ile iç sıvı çekirdeği ve izolasyon katmanlarını inceleyin.")
-    html_3d = generate_3d_pipe_html(sim_results, height_px=560)
+    html_3d = generate_3d_pipe_html(sim_results, height_px=560, temp_unit=t_unit, press_unit=p_unit)
     st.components.v1.html(html_3d, height=580, scrolling=False)
 
 with tab_charts:
@@ -830,18 +830,18 @@ with tab_charts:
     
     col_chart_top_1, col_chart_top_2 = st.columns(2)
     with col_chart_top_1:
-        st.plotly_chart(create_pressure_comparison_chart(sim_results), use_container_width=True)
+        st.plotly_chart(create_pressure_comparison_chart(sim_results, press_unit=p_unit), use_container_width=True)
     with col_chart_top_2:
-        st.plotly_chart(create_temperature_profile_chart(sim_results), use_container_width=True)
+        st.plotly_chart(create_temperature_profile_chart(sim_results, temp_unit=t_unit), use_container_width=True)
 
     col_chart_bot_1, col_chart_bot_2 = st.columns(2)
     with col_chart_bot_1:
-        st.plotly_chart(create_flashing_margin_chart(sim_results), use_container_width=True)
+        st.plotly_chart(create_flashing_margin_chart(sim_results, press_unit=p_unit), use_container_width=True)
     with col_chart_bot_2:
         if is_3d_mode:
             station_pct = st.slider("3D Enine Kesit İstasyon Konumu (% Uzunluk)", 0, 100, 100, step=10)
             station_idx = int((station_pct / 100.0) * (len(sim_results.distance_m) - 1))
-            st.plotly_chart(create_radial_cross_section_heatmap(sim_results, slice_index=station_idx), use_container_width=True)
+            st.plotly_chart(create_radial_cross_section_heatmap(sim_results, slice_index=station_idx, temp_unit=t_unit), use_container_width=True)
         else:
             st.info("💡 Boru içi 2D radyal enine kesit sıcaklık konturu (T(r, θ)) için sol panelden '3D Sonlu Hacimler' modunu seçebilirsiniz.")
 
@@ -917,7 +917,7 @@ with tab_report:
         "date_str": report_date
     }
     
-    pdf_bytes = generate_pdf_report(sim_results, meta_dict)
+    pdf_bytes = generate_pdf_report(sim_results, meta_dict, temp_unit=t_unit, press_unit=p_unit)
     st.download_button(
         label="📄 Resmi PDF Mühendislik Hesaplama Raporunu İndir",
         data=pdf_bytes,

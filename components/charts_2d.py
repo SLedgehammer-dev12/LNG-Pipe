@@ -6,6 +6,7 @@ import numpy as np
 import plotly.graph_objects as go
 from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults
+from core.units import from_si
 
 
 def _apply_theme(fig: go.Figure) -> go.Figure:
@@ -28,10 +29,10 @@ def _apply_theme(fig: go.Figure) -> go.Figure:
     return fig
 
 
-def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, Simulation3DResults]) -> go.Figure:
+def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, Simulation3DResults], press_unit: str = "bar") -> go.Figure:
     """Plots Total Static Pressure vs Saturation Vapor Pressure along pipe length."""
     x = results.distance_m
-    p_bar = [p / 1e5 for p in results.pressure_pa]
+    p_bar = [from_si("pressure", p, press_unit) for p in results.pressure_pa]
 
     fig = go.Figure()
 
@@ -42,28 +43,28 @@ def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, S
         mode="lines",
         name="Toplam Statik Basınç P(x)",
         line=dict(color="#58a6ff", width=3),
-        hovertemplate="Toplam Basınç: %{y:.3f} bar<extra></extra>"
+        hovertemplate=f"Toplam Basınç: %{{y:.3f}} {press_unit}<extra></extra>"
     ))
 
     if isinstance(results, Simulation3DResults):
-        p_sat_wall_bar = [p / 1e5 for p in results.wall_vapor_pressure_pa]
-        p_sat_bulk_bar = [p / 1e5 for p in results.bulk_vapor_pressure_pa]
+        p_sat_wall = [from_si("pressure", p, press_unit) for p in results.wall_vapor_pressure_pa]
+        p_sat_bulk = [from_si("pressure", p, press_unit) for p in results.bulk_vapor_pressure_pa]
 
         fig.add_trace(go.Scatter(
             x=x,
-            y=p_sat_wall_bar,
+            y=p_sat_wall,
             mode="lines",
             name="Çeper Doyma Basıncı Psat(T_wall) [3D]",
             line=dict(color="#f85149", width=2.5, dash="dash"),
-            hovertemplate="Çeper Psat: %{y:.3f} bar<extra></extra>"
+            hovertemplate=f"Çeper Psat: %{{y:.3f}} {press_unit}<extra></extra>"
         ))
         fig.add_trace(go.Scatter(
             x=x,
-            y=p_sat_bulk_bar,
+            y=p_sat_bulk,
             mode="lines",
             name="Yığın Doyma Basıncı Psat(T_bulk)",
             line=dict(color="#d29922", width=1.5, dash="dot"),
-            hovertemplate="Yığın Psat: %{y:.3f} bar<extra></extra>"
+            hovertemplate=f"Yığın Psat: %{{y:.3f}} {press_unit}<extra></extra>"
         ))
 
         if results.has_wall_flashed and results.wall_flashing_point_m is not None:
@@ -77,14 +78,14 @@ def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, S
                 annotation_font=dict(color="#ff7b72", size=11)
             )
     else:
-        p_sat_bar = [p / 1e5 for p in results.vapor_pressure_pa]
+        p_sat = [from_si("pressure", p, press_unit) for p in results.vapor_pressure_pa]
         fig.add_trace(go.Scatter(
             x=x,
-            y=p_sat_bar,
+            y=p_sat,
             mode="lines",
             name="Doyma Buhar Basıncı Psat(T)",
             line=dict(color="#f85149", width=2.5, dash="dash"),
-            hovertemplate="Buhar Basıncı: %{y:.3f} bar<extra></extra>"
+            hovertemplate=f"Buhar Basıncı: %{{y:.3f}} {press_unit}<extra></extra>"
         ))
 
         if results.has_flashed and results.flashing_point_m is not None:
@@ -101,23 +102,24 @@ def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, S
     fig.update_layout(
         title=dict(text="<b>Toplam Basınç ve Doyma Buhar Basıncı Profili (P vs Psat)</b>", x=0.05),
         xaxis_title="Boru Uzunluğu x (m)",
-        yaxis_title="Basınç (bar)"
+        yaxis_title=f"Basınç ({press_unit})"
     )
     return _apply_theme(fig)
 
 
-def create_temperature_profile_chart(results: Union[PipelineSimulationResults, Simulation3DResults], temp_unit: str = "C") -> go.Figure:
+def create_temperature_profile_chart(results: Union[PipelineSimulationResults, Simulation3DResults], temp_unit: str = "°C") -> go.Figure:
     """Plots Bulk LNG temperature, center core, and wall temperatures."""
     x = results.distance_m
     t_offset = 273.15 if temp_unit == "C" else 0.0
     t_unit_str = "°C" if temp_unit == "C" else "K"
+    t_unit_label = temp_unit
 
     fig = go.Figure()
 
     if isinstance(results, Simulation3DResults):
-        t_bulk = [t - t_offset for t in results.bulk_temperature_k]
-        t_center = [t - t_offset for t in results.center_temperature_k]
-        t_wall = [t - t_offset for t in results.wall_temperature_k]
+        t_bulk = [from_si("temperature", t, t_unit_label) for t in results.bulk_temperature_k]
+        t_center = [from_si("temperature", t, t_unit_label) for t in results.center_temperature_k]
+        t_wall = [from_si("temperature", t, t_unit_label) for t in results.wall_temperature_k]
 
         fig.add_trace(go.Scatter(
             x=x, y=t_wall, mode="lines",
@@ -138,9 +140,9 @@ def create_temperature_profile_chart(results: Union[PipelineSimulationResults, S
             hovertemplate=f"Merkez Çekirdek: %{{y:.2f}} {t_unit_str}<extra></extra>"
         ))
     else:
-        t_fluid = [t - t_offset for t in results.temperature_k]
-        t_pipe_in = [r["pipe_inner"] - t_offset for r in results.radial_temperatures]
-        t_ins_out = [r["insulation_outer"] - t_offset for r in results.radial_temperatures]
+        t_fluid = [from_si("temperature", t, t_unit_label) for t in results.temperature_k]
+        t_pipe_in = [from_si("temperature", r["pipe_inner"], t_unit_label) for r in results.radial_temperatures]
+        t_ins_out = [from_si("temperature", r["insulation_outer"], t_unit_label) for r in results.radial_temperatures]
 
         fig.add_trace(go.Scatter(
             x=x, y=t_fluid, mode="lines",
@@ -169,44 +171,44 @@ def create_temperature_profile_chart(results: Union[PipelineSimulationResults, S
     return _apply_theme(fig)
 
 
-def create_flashing_margin_chart(results: Union[PipelineSimulationResults, Simulation3DResults]) -> go.Figure:
+def create_flashing_margin_chart(results: Union[PipelineSimulationResults, Simulation3DResults], press_unit: str = "bar") -> go.Figure:
     """Plots Flashing / Cavitation Margin (P - Psat) with zero-line safety boundary."""
     x = results.distance_m
     fig = go.Figure()
 
     if isinstance(results, Simulation3DResults):
-        wall_margin_bar = [m / 1e5 for m in results.wall_flashing_margin_pa]
-        bulk_margin_bar = [m / 1e5 for m in results.bulk_flashing_margin_pa]
+        wall_margin = [from_si("pressure", m, press_unit) for m in results.wall_flashing_margin_pa]
+        bulk_margin = [from_si("pressure", m, press_unit) for m in results.bulk_flashing_margin_pa]
 
         fig.add_trace(go.Scatter(
             x=x,
-            y=wall_margin_bar,
+            y=wall_margin,
             mode="lines",
             name="Çeper Güvenlik Marjı (P - Psat_wall) [Kritik]",
             line=dict(color="#f85149", width=2.5),
             fill="tozeroy",
             fillcolor="rgba(248, 81, 73, 0.15)",
-            hovertemplate="Çeper Marjı: %{y:.3f} bar<extra></extra>"
+            hovertemplate=f"Çeper Marjı: %{{y:.3f}} {press_unit}<extra></extra>"
         ))
         fig.add_trace(go.Scatter(
             x=x,
-            y=bulk_margin_bar,
+            y=bulk_margin,
             mode="lines",
             name="Yığın Güvenlik Marjı (P - Psat_bulk)",
             line=dict(color="#3fb950", width=2.0, dash="dash"),
-            hovertemplate="Yığın Marjı: %{y:.3f} bar<extra></extra>"
+            hovertemplate=f"Yığın Marjı: %{{y:.3f}} {press_unit}<extra></extra>"
         ))
     else:
-        margins_bar = [m / 1e5 for m in results.flashing_margin_pa]
+        margins = [from_si("pressure", m, press_unit) for m in results.flashing_margin_pa]
         fig.add_trace(go.Scatter(
             x=x,
-            y=margins_bar,
+            y=margins,
             mode="lines",
             name="Flaş / Kavitasyon Güvenlik Marjı (P - Psat)",
             line=dict(color="#a371f7", width=2.5),
             fill="tozeroy",
             fillcolor="rgba(163, 113, 247, 0.15)",
-            hovertemplate="Güvenlik Marjı: %{y:.3f} bar<extra></extra>"
+            hovertemplate=f"Güvenlik Marjı: %{{y:.3f}} {press_unit}<extra></extra>"
         ))
 
     # Zero boundary line
@@ -223,12 +225,12 @@ def create_flashing_margin_chart(results: Union[PipelineSimulationResults, Simul
     fig.update_layout(
         title=dict(text="<b>Flaş ve Kavitasyon Güvenlik Marjı ΔP(x) = P(x) - Psat(T)</b>", x=0.05),
         xaxis_title="Boru Uzunluğu x (m)",
-        yaxis_title="Güvenlik Marjı (bar)"
+        yaxis_title=f"Güvenlik Marjı ({press_unit})"
     )
     return _apply_theme(fig)
 
 
-def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1) -> go.Figure:
+def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1, temp_unit: str = "C") -> go.Figure:
     """
     Renders 2D cross-sectional contour heatmap T(r, theta) of the pipe cross section at slice_index.
     Reveals the cryogenic core and warm thermal boundary layer at the pipe inner wall.
@@ -238,7 +240,14 @@ def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1) -> go
     
     r_coords = results_3d.radial_coords_m * 1000.0  # mm
     theta_coords = results_3d.azimuthal_coords_rad
-    temp_grid = results_3d.temp_field_k[idx, :, :] - 273.15  # to °C
+    temp_grid = results_3d.temp_field_k[idx, :, :]  # K
+    
+    # Convert to display unit
+    if temp_unit == "C":
+        temp_grid = temp_grid - 273.15
+        t_unit_str = "°C"
+    else:
+        t_unit_str = "K"
     
     # Create polar contour plot
     # Interpolate into regular 2D Cartesian grid (x, y) for smooth contour
@@ -271,9 +280,9 @@ def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1) -> go
         y=y_lin,
         z=Z_temp,
         colorscale="Viridis",
-        colorbar=dict(title="T (°C)"),
+        colorbar=dict(title=f"T ({t_unit_str})"),
         contours=dict(showlines=True),
-        hovertemplate="X: %{x:.1f} mm<br>Y: %{y:.1f} mm<br>Sıcaklık: %{z:.2f} °C<extra></extra>"
+        hovertemplate=f"X: %{{x:.1f}} mm<br>Y: %{{y:.1f}} mm<br>Sıcaklık: %{{z:.2f}} {t_unit_str}<extra></extra>"
     ))
     
     fig.update_layout(

@@ -3,28 +3,34 @@
 import json
 from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults
+from core.units import from_si
 
 
-def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | None = None, anchor_dist_m: float = 180.0) -> str:
+def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | None = None, anchor_dist_m: float = 180.0, temp_unit: str = "°C", press_unit: str = "bar") -> str:
     """Generates an interactive SVG/HTML P&ID schematic of the Jetty-to-Tank circuit."""
 
     if isinstance(results, Simulation3DResults):
         cfg = results.config.pipeline_config
-        t_out = results.bulk_temperature_k[-1] - 273.15
-        p_out = results.pressure_pa[-1] / 1e5
-        psat_out = results.wall_vapor_pressure_pa[-1] / 1e5
+        t_out_k = results.bulk_temperature_k[-1]
+        p_out_pa = results.pressure_pa[-1]
+        psat_out_pa = results.wall_vapor_pressure_pa[-1]
         flashed = results.has_wall_flashed
         flash_m = results.wall_flashing_point_m or 0.0
     else:
         cfg = results.config
-        t_out = results.outlet_temperature_k - 273.15
-        p_out = results.outlet_pressure_pa / 1e5
-        psat_out = results.outlet_vapor_pressure_pa / 1e5
+        t_out_k = results.outlet_temperature_k
+        p_out_pa = results.outlet_pressure_pa
+        psat_out_pa = results.outlet_vapor_pressure_pa
         flashed = results.has_flashed
         flash_m = results.flashing_point_m or 0.0
 
-    t_in = cfg.inlet_temperature_k - 273.15
-    p_in = cfg.inlet_pressure_pa / 1e5
+    t_in_k = cfg.inlet_temperature_k
+    p_in_pa = cfg.inlet_pressure_pa
+    t_in = from_si("temperature", t_in_k, temp_unit)
+    t_out = from_si("temperature", t_out_k, temp_unit)
+    p_in = from_si("pressure", p_in_pa, press_unit)
+    p_out = from_si("pressure", p_out_pa, press_unit)
+    psat_out = from_si("pressure", psat_out_pa, press_unit)
     inlet_t_c = t_in
     inlet_p_bar = p_in
     m_flow = cfg.mass_flow_rate_kg_s
@@ -51,7 +57,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
             f"L {x1:.1f} 180", f"L {x1:.1f} 270",
         ])
         omega_groups.append(f"""
-      <g class="node-group" onclick="showInfo('Omega-{k+1} Dolfeni (Expansion Loop)', 'Kriyojenik büzülmeyi sönümleyen {k+1}. Omega genleşme döngüsü. Hat soğuduğunda esneyerek gerilimi azaltır.', '{t_om:.1f} °C', '{p_om:.2f} bar', 'Ω-Loop {k+1}')">
+      <g class="node-group" onclick="showInfo('Omega-{k+1} Dolfeni (Expansion Loop)', 'Kriyojenik büzülmeyi sönümleyen {k+1}. Omega genleşme döngüsü. Hat soğuduğunda esneyerek gerilimi azaltır.', '{t_om:.1f} {temp_unit}', '{p_om:.2f} {press_unit}', 'Ω-Loop {k+1}')">
         <rect x="{x0-10:.1f}" y="160" width="{omega_w+20:.1f}" height="180" fill="#161b22" stroke="#d29922" stroke-width="1.5" stroke-dasharray="4,2" rx="4" />
         <circle cx="{cx:.1f}" cy="172" r="5" fill="#da3633" />
         <text x="{x0-5:.1f}" y="152" fill="#d29922" font-size="10" font-weight="700">OMEGA-{k+1} DOLFENİ</text>
@@ -61,7 +67,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
     for k in range(omega_count + 1):
         ax = omega_span_start + slot * k
         apd_groups.append(f"""
-      <g class="node-group" onclick="showInfo('APD-{k+1} Dolfeni', 'Yaklaşım köprüsü taşıyıcı dolfeni. Kriyojenik boru köprüsünü taşır.', '{t_in + 0.3:.1f} °C', '{p_in - 0.1:.2f} bar', 'Kazık Çapı: 1200 mm')">
+      <g class="node-group" onclick="showInfo('APD-{k+1} Dolfeni', 'Yaklaşım köprüsü taşıyıcı dolfeni. Kriyojenik boru köprüsünü taşır.', '{t_in + 0.3:.1f} {temp_unit}', '{p_in - 0.1:.2f} {press_unit}', 'Kazık Çapı: 1200 mm')">
         <rect x="{ax-15:.1f}" y="250" width="30" height="85" fill="#21262d" stroke="#8b949e" stroke-width="1.5" rx="3" />
         <circle cx="{ax:.1f}" cy="310" r="4" fill="#30363d" />
         <text x="{ax-22:.1f}" y="352" fill="#8b949e" font-size="9" font-weight="600">APD-{k+1}</text>
@@ -73,7 +79,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
         fx, ft, fp = omega_labels[0]
         omega_label_html = (
             f'<rect x="{fx-45:.1f}" y="240" width="95" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#d29922" />\n'
-            f'      <text x="{fx-40:.1f}" y="253" fill="#d29922" font-size="9" font-weight="700">Ω-1: {fp:.1f}b | {ft:.1f}°</text>'
+            f'      <text x="{fx-40:.1f}" y="253" fill="#d29922" font-size="9" font-weight="700">Ω-1: {fp:.1f}{press_unit} | {ft:.1f}{temp_unit}</text>'
         )
     else:
         omega_label_html = ""
@@ -321,12 +327,12 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
 
       <!-- Live telemetry labels on pipe -->
       <rect x="220" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#58a6ff" />
-      <text x="225" y="253" fill="#58a6ff" font-size="9" font-weight="700">GİRİŞ: {inlet_p_bar:.1f}b | {inlet_t_c:.1f}°</text>
+      <text x="225" y="253" fill="#58a6ff" font-size="9" font-weight="700">GİRİŞ: {p_in:.1f}{press_unit} | {t_in:.1f}{temp_unit}</text>
 
       {omega_label_html}
 
       <rect x="850" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#3fb950" />
-      <text x="855" y="253" fill="#3fb950" font-size="9" font-weight="700">ÇIKIŞ: {p_out:.1f}b | {t_out:.1f}°</text>
+      <text x="855" y="253" fill="#3fb950" font-size="9" font-weight="700">ÇIKIŞ: {p_out:.1f}{press_unit} | {t_out:.1f}{temp_unit}</text>
     </svg>
 
     <!-- Interactive Inspector Box -->
