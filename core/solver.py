@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from typing import List, Optional, Dict
 import math
 import numpy as np
+import CoolProp.CoolProp as CP
 
 from core.fluids import FluidManager, FluidProperties
 from core.heat_transfer import PipeThermalModel
@@ -133,8 +134,14 @@ class PipelineSolver:
                 h_fg = max(h_fg, 1e4)
                 # Quality from cumulative enthalpy relative to saturated liquid at local P
                 vapor_quality = min(0.99, max(0.0, (curr_h - h_liq) / h_fg))
-                # Saturated vapor density via ideal-gas estimate for Lockhart-Martinelli
-                rho_v = max(0.05, 0.01604 * curr_p / (8.314 * max(curr_t, 90.7)))
+                # Saturated vapor density via CoolProp for Lockhart-Martinelli
+                try:
+                    rho_v = float(CP.PropsSI("D", "T", curr_t, "P", curr_p, backend))
+                    if not math.isfinite(rho_v) or rho_v <= 0:
+                        raise ValueError("CoolProp returned invalid vapor density")
+                except Exception:
+                    # Fallback to ideal-gas estimate if CoolProp fails
+                    rho_v = max(0.05, 0.01604 * curr_p / (8.314 * max(curr_t, 90.7)))
                 alpha, phi_l_sq, two_phase_rho = calculate_two_phase_flashing(
                     vapor_quality=vapor_quality,
                     liquid_density=props.density,
