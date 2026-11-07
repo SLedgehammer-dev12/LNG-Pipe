@@ -681,9 +681,9 @@ def generate_terminal_3d_html(
     const tempTex = buildTempGradient(telemetry.stations, false);
     const tempTexRet = buildTempGradient(telemetry.return_stations || telemetry.stations, true);
 
-    function buildPipeCurve(zOffset, loopExtZ, loopDir) {{
+    function pipeControlPoints(zOffset, loopExtZ, loopDir) {{
       const D = loopExtZ * loopDir;
-      const pts = [
+      return [
         new THREE.Vector3(-132, 14, zOffset),
         new THREE.Vector3(-20, 14, zOffset),
         // Omega Loop 1: iki paralel yateral bacak + 180° dönüş (plan görünümünde Ω)
@@ -701,10 +701,41 @@ def generate_terminal_3d_html(
         new THREE.Vector3(160, 12, zOffset),
         new THREE.Vector3(220, 8, zOffset)
       ];
-      return new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.15);
     }}
 
-    const mainCurve = buildPipeCurve(MAIN_Z, LOOP_EXT, +1);
+    // True horizontal parallel offset of a polyline (mitered corners), so the
+    // return line stays parallel through straight runs and omega loops alike.
+    function offsetPolyline(points, offset) {{
+      const segs = [];
+      for (let i = 0; i < points.length - 1; i++) {{
+        const a = points[i], b = points[i + 1];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        const len = Math.hypot(dx, dz) || 1;
+        const nx = -dz / len, nz = dx / len;
+        segs.push({{
+          a: new THREE.Vector3(a.x + nx * offset, a.y, a.z + nz * offset),
+          b: new THREE.Vector3(b.x + nx * offset, b.y, b.z + nz * offset)
+        }});
+      }}
+      const out = [segs[0].a];
+      for (let i = 0; i < segs.length - 1; i++) {{
+        const A = segs[i], B = segs[i + 1];
+        const d1x = A.b.x - A.a.x, d1z = A.b.z - A.a.z;
+        const d2x = B.b.x - B.a.x, d2z = B.b.z - B.a.z;
+        const den = d1x * d2z - d1z * d2x;
+        if (Math.abs(den) < 1e-9) {{
+          out.push(A.b);
+        }} else {{
+          const t = ((B.a.x - A.a.x) * d2z - (B.a.z - A.a.z) * d2x) / den;
+          out.push(new THREE.Vector3(A.a.x + t * d1x, A.a.y, A.a.z + t * d1z));
+        }}
+      }}
+      out.push(segs[segs.length - 1].b);
+      return out;
+    }}
+
+    const mainPts = pipeControlPoints(MAIN_Z, LOOP_EXT, +1);
+    const mainCurve = new THREE.CatmullRomCurve3(mainPts, false, 'catmullrom', 0.15);
     const mainPipeGeo = new THREE.TubeGeometry(mainCurve, 160, mainRadius, 18, false);
     const mainPipeMat = new THREE.MeshStandardMaterial({{
       map: tempTex, color: 0xffffff, roughness: 0.25, metalness: 0.65,
@@ -726,8 +757,10 @@ def generate_terminal_3d_html(
     tankLeadIn.castShadow = true;
     terminalGroup.add(tankLeadIn);
 
-    // Return / recirculation line (mirrored loops, z=-3.5)
-    const recircCurve = buildPipeCurve(RET_Z, LOOP_EXT - 4.0, -1);
+    // Return / recirculation line: true parallel offset of the supply route.
+    const parallelOffset = -Math.max(7.0, mainRadius + retRadius + 3.0);
+    const returnPts = offsetPolyline(mainPts, parallelOffset);
+    const recircCurve = new THREE.CatmullRomCurve3(returnPts, false, 'catmullrom', 0.15);
     const recircPipeGeo = new THREE.TubeGeometry(recircCurve, 160, retRadius, 14, false);
     const recircPipeMat = new THREE.MeshStandardMaterial({{
       map: tempTexRet, color: 0x9be9a8, roughness: 0.3, metalness: 0.6,
@@ -763,21 +796,17 @@ def generate_terminal_3d_html(
       telemetry.min_centerline_clearance = Number(minDist.toFixed(2));
     }})();
 
-    // Long-radius elbow collars at the omega-loop corners (no miter joints)
-    const retLoopTop = RET_Z - (LOOP_EXT - 4.0);
-    const mainLoopTop = MAIN_Z + LOOP_EXT;
-    const elbowCols = [
-      [-16, MAIN_Z], [-16, mainLoopTop], [6, mainLoopTop], [6, MAIN_Z],
-      [84, MAIN_Z], [84, mainLoopTop], [106, mainLoopTop], [106, MAIN_Z],
-      [-16, RET_Z], [-16, retLoopTop], [6, retLoopTop], [6, RET_Z],
-      [84, RET_Z], [84, retLoopTop], [106, retLoopTop], [106, RET_Z]
-    ];
+    // Long-radius elbow collars at the omega-loop corners (supply and parallel return)
     const elbowMat = new THREE.MeshStandardMaterial({{ color: 0xaab4c0, roughness: 0.35, metalness: 0.7 }});
-    elbowCols.forEach(([ex, ez]) => {{
+    const addElbow = (p) => {{
       const elbow = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.3, 8, 20), elbowMat);
-      elbow.position.set(ex, 14, ez);
+      elbow.position.set(p.x, p.y, p.z);
       elbow.rotation.x = Math.PI / 2;
       terminalGroup.add(elbow);
+    }};
+    [2, 3, 4, 5, 7, 8, 9, 10].forEach(i => {{
+      addElbow(mainPts[i]);
+      addElbow(returnPts[i]);
     }});
 
     // Click-to-inspect fluid state at any point on the supply/return pipe

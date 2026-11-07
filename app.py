@@ -25,6 +25,7 @@ from core.mechanics import (
     calculate_joukowsky_surge,
 )
 from core.pipe_schedule import PIPE_TABLE_GROUPS, inner_diameter_mm
+from core.units import DEFAULT_UNITS, units_for, to_si, from_si, delta_from_si
 from reports.pdf_report import generate_pdf_report
 
 st.set_page_config(
@@ -207,8 +208,54 @@ is_3d_mode = "3D" in solver_mode
 selected_preset_name = st.sidebar.selectbox("Hızlı Senaryo Seçimi", list(PRESETS.keys()))
 preset = PRESETS[selected_preset_name]
 
+# Reset stored SI values when the preset changes so widget defaults follow the preset.
+if st.session_state.get("_last_preset") != selected_preset_name:
+    st.session_state["_last_preset"] = selected_preset_name
+    st.session_state["_preset_token"] = st.session_state.get("_preset_token", 0) + 1
+    for _k in [k for k in st.session_state if k.startswith("si_")]:
+        del st.session_state[_k]
+preset_token = st.session_state.get("_preset_token", 0)
+
+
+def unit_input(label, category, key, default_si, min_si=None, max_si=None, step_si=None, help=None):
+    """Number input with an adjacent unit dropdown; stores the SI value in session_state."""
+    c_val, c_unit = st.columns([3, 1])
+    unit_options = units_for(category)
+    with c_unit:
+        unit = st.selectbox(
+            f"{label} birimi",
+            unit_options,
+            index=unit_options.index(DEFAULT_UNITS[category]),
+            key=f"unit_{key}",
+            label_visibility="collapsed",
+        )
+    si_prev = st.session_state.get(f"si_{key}", default_si)
+    kwargs = {}
+    if min_si is not None:
+        kwargs["min_value"] = round(from_si(category, min_si, unit), 6)
+    if max_si is not None:
+        kwargs["max_value"] = round(from_si(category, max_si, unit), 6)
+    if step_si is not None:
+        kwargs["step"] = round(delta_from_si(category, abs(step_si), unit), 6)
+    with c_val:
+        disp = st.number_input(
+            label,
+            value=round(from_si(category, si_prev, unit), 6),
+            key=f"num_{key}_{unit}_{preset_token}",
+            help=help,
+            **kwargs,
+        )
+    si_new = to_si(category, disp, unit)
+    st.session_state[f"si_{key}"] = si_new
+    return si_new, unit
+
+
 with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
-    length_m = st.number_input("Boru Uzunluğu L (m)", min_value=5.0, max_value=10000.0, value=preset["length_m"] if preset else 300.0, step=25.0)
+    length_m, _ = unit_input(
+        "Boru Uzunluğu L", "length", "length",
+        preset["length_m"] if preset else 300.0,
+        min_si=5.0, max_si=10000.0, step_si=25.0,
+    )
 
     geom_mode = st.radio(
         "Boru Boyutlandırma Yöntemi",
@@ -230,17 +277,34 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
         diameter_mm = inner_diameter_mm(od_mm, wall_thickness_mm)
         st.caption(f"OD {od_mm:.1f} mm · ID {diameter_mm:.2f} mm · t {wall_thickness_mm:.2f} mm · {geom_group}")
     else:
-        diameter_mm = st.number_input("Boru İç Çapı ID (mm)", min_value=25.0, max_value=1200.0, value=preset["diameter_mm"] if preset else 200.0, step=10.0)
-        wall_thickness_mm = st.number_input("Boru Et Kalınlığı (mm)", min_value=1.5, max_value=60.0, value=preset["thickness_mm"] if preset else 6.0, step=0.5)
+        diameter_mm, _ = unit_input(
+            "Boru İç Çapı ID", "diameter", "diameter",
+            preset["diameter_mm"] if preset else 200.0,
+            min_si=25.0, max_si=1200.0, step_si=10.0,
+        )
+        wall_thickness_mm, _ = unit_input(
+            "Boru Et Kalınlığı", "diameter", "wall",
+            preset["thickness_mm"] if preset else 6.0,
+            min_si=1.5, max_si=60.0, step_si=0.5,
+        )
 
     inclination_deg = st.number_input("Hat Eğim Açısı θ (°)", min_value=-90.0, max_value=90.0, value=preset["incline"] if preset else 0.0, step=1.0, help="Pozitif = Yokuş yukarı (hidrostatik basınç kaybı ekler)")
     pipe_mat_name = st.selectbox("Boru Malzemesi (ısıl iletkenlik)", list(PIPE_MATERIALS.keys()))
     roughness_um = st.number_input("Boru İç Pürüzlülüğü ε (µm)", min_value=1.0, max_value=500.0, value=45.0, step=5.0)
 
     st.markdown("###### ↩️ Dönüş (Sirkülasyon) Hattı")
-    return_diameter_mm = st.number_input("Dönüş Hattı İç Çapı (mm)", min_value=10.0, max_value=800.0, value=100.0, step=10.0)
-    return_wall_thickness_mm = st.number_input("Dönüş Hattı Et Kalınlığı (mm)", min_value=1.0, max_value=30.0, value=3.0, step=0.5)
-    return_mass_flow_kg_s = st.number_input("Dönüş Hattı Debisi (kg/s)", min_value=0.0, max_value=500.0, value=5.0, step=1.0)
+    return_diameter_mm, _ = unit_input(
+        "Dönüş Hattı İç Çapı", "diameter", "return_diameter",
+        100.0, min_si=10.0, max_si=800.0, step_si=10.0,
+    )
+    return_wall_thickness_mm, _ = unit_input(
+        "Dönüş Hattı Et Kalınlığı", "diameter", "return_wall",
+        3.0, min_si=1.0, max_si=30.0, step_si=0.5,
+    )
+    return_mass_flow_kg_s, _ = unit_input(
+        "Dönüş Hattı Debisi", "mass_flow", "return_flow",
+        5.0, min_si=0.0, max_si=500.0, step_si=1.0,
+    )
 
 # Initialize session state for multi-component composition and multi-layer insulation
 if "custom_composition" not in st.session_state:
@@ -316,9 +380,23 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
 
         active_composition = st.session_state["custom_composition"]
 
-    inlet_t_c = st.number_input("Giriş Sıcaklığı T_in (°C)", min_value=-182.0, max_value=-100.0, value=preset["inlet_t_c"] if preset else -161.5, step=0.5)
-    inlet_p_bar = st.number_input("Giriş Toplam Basıncı P_in (bar)", min_value=1.013, max_value=60.0, value=preset["inlet_p_bar"] if preset else 5.0, step=0.5)
-    mass_flow_kg_s = st.number_input("Kütlesel Debi m (kg/s)", min_value=0.5, max_value=2000.0, value=preset["mass_flow"] if preset else 40.0, step=5.0)
+    inlet_t_k, t_unit = unit_input(
+        "Giriş Sıcaklığı T_in", "temperature", "inlet_t",
+        (preset["inlet_t_c"] + 273.15) if preset else 111.65,
+        min_si=91.15, max_si=173.15, step_si=0.5,
+    )
+    inlet_p_pa, p_unit = unit_input(
+        "Giriş Toplam Basıncı P_in", "pressure", "inlet_p",
+        (preset["inlet_p_bar"] * 1e5) if preset else 5e5,
+        min_si=1.013e5, max_si=6.0e6, step_si=0.5e5,
+    )
+    mass_flow_kg_s, flow_unit = unit_input(
+        "Kütlesel Debi m", "mass_flow", "mass_flow",
+        preset["mass_flow"] if preset else 40.0,
+        min_si=0.5, max_si=2000.0, step_si=5.0,
+    )
+    inlet_t_c = inlet_t_k - 273.15
+    inlet_p_bar = inlet_p_pa / 1e5
 
 with st.sidebar.expander("🛡️ Çok Katmanlı Kriyojenik İzolasyon", expanded=True):
     ins_pack_choice = st.selectbox(
@@ -398,18 +476,27 @@ with st.sidebar.expander("🛡️ Çok Katmanlı Kriyojenik İzolasyon", expande
     st.info(f"🛡️ **Toplam İzolasyon:** {total_ins_thick_mm:.1f} mm ({len(st.session_state['insulation_layers'])} Katman)")
 
 with st.sidebar.expander("☀️ Çevre ve Dış Ortam", expanded=False):
-    amb_temp_c = st.slider("Ortam Sıcaklığı T_amb (°C)", min_value=-20.0, max_value=55.0, value=25.0, step=1.0)
-    wind_speed_m_s = st.slider("Rüzgar Hızı (m/s)", min_value=0.5, max_value=30.0, value=3.0, step=0.5)
-
-with st.sidebar.expander("📐 Görüntü Birimleri", expanded=False):
-    disp_temp_unit = st.selectbox("Sıcaklık Birimi", ["°C", "K", "°F"], index=0, help="Hesaplama içeri Kelvin'dir; sadece gösterim dönüştürülür.")
-    disp_press_unit = st.selectbox("Basınç Birimi", ["bar", "kPa", "psi", "MPa"], index=0, help="Hesaplama içeri Pascal'dır; sadece gösterim dönüştürülür.")
-    disp_flow_unit = st.selectbox("Kütlesel Akış Birimi", ["kg/s", "kg/h", "t/h"], index=0, help="Hesaplama içeri kg/sn'dir; sadece gösterim dönüştürülür.")
+    amb_temp_k, _ = unit_input(
+        "Ortam Sıcaklığı T_amb", "temperature", "amb_t",
+        298.15, min_si=253.15, max_si=328.15, step_si=1.0,
+    )
+    amb_temp_c = amb_temp_k - 273.15
+    wind_speed_m_s, _ = unit_input(
+        "Rüzgar Hızı", "velocity", "wind",
+        3.0, min_si=0.5, max_si=30.0, step_si=0.5,
+    )
 
 with st.sidebar.expander("📐 ASME B31.3 & Vana Kapanma (Surge)", expanded=False):
-    design_p_bar = st.number_input("Tasarım Basıncı P_design (bar)", min_value=2.0, max_value=100.0, value=20.0, step=2.0)
+    design_p_pa, _ = unit_input(
+        "Tasarım Basıncı P_design", "pressure", "design_p",
+        20e5, min_si=2e5, max_si=100e5, step_si=2e5,
+    )
+    design_p_bar = design_p_pa / 1e5
     valve_closure_time_s = st.slider("ESDV-101 Vana Kapanma Süresi (s)", min_value=0.5, max_value=30.0, value=15.0, step=0.5, help="SIGTTO tavsiyesi: Akustik koç darbesini önlemek için t >= 15-20 s")
-    anchor_dist_m = st.number_input("Sabit Mesnet Aralığı (m)", min_value=20.0, max_value=500.0, value=min(float(length_m), 180.0), step=10.0)
+    anchor_dist_m, _ = unit_input(
+        "Sabit Mesnet Aralığı", "length", "anchor",
+        min(float(length_m), 180.0), min_si=20.0, max_si=500.0, step_si=10.0,
+    )
 
 if is_3d_mode:
     with st.sidebar.expander("🌐 3D Sayısal Izgara Çözünürlüğü", expanded=False):
@@ -424,45 +511,15 @@ else:
 
 # --- GÖSTERİM BİRİM DÖNÜŞÜMLERİ (hesaplama içeri K / Pa / kg/s kalır) ---
 def _t_show(temp_k, unit):
-    """Kelvin'i seçilen gösterim birimine dönüştürür."""
-    c = temp_k - 273.15
-    if unit == "K":
-        return temp_k
-    if unit == "°F":
-        return c * 9.0 / 5.0 + 32.0
-    return c  # °C
+    return from_si("temperature", temp_k, unit)
 
 
 def _p_show(pa, unit):
-    """Pascal'ı seçilen gösterim birimine dönüştürür."""
-    if unit == "kPa":
-        return pa / 1.0e3
-    if unit == "psi":
-        return pa / 6894.757
-    if unit == "MPa":
-        return pa / 1.0e6
-    return pa / 1.0e5  # bar
+    return from_si("pressure", pa, unit)
 
 
 def _m_show(kg_s, unit):
-    """kg/sn'i seçilen gösterim birimine dönüştürür."""
-    if unit == "kg/h":
-        return kg_s * 3600.0
-    if unit == "t/h":
-        return kg_s * 3.6
-    return kg_s  # kg/s
-
-
-def _unit_label_temp(unit):
-    return {"K": "K", "°F": "°F"}.get(unit, "°C")
-
-
-def _unit_label_press(unit):
-    return {"kPa": "kPa", "psi": "psi", "MPa": "MPa"}.get(unit, "bar")
-
-
-def _unit_label_flow(unit):
-    return {"kg/h": "kg/h", "t/h": "t/h"}.get(unit, "kg/s")
+    return from_si("mass_flow", kg_s, unit)
 
 
 # --- EXECUTE SIMULATION ---
@@ -540,14 +597,14 @@ mode_label = "3D Sonlu Hacimler (Silindirik r, θ, z)" if is_3d_mode else "1D So
 st.markdown(f'<div class="main-header">❄️ LNG Boru Akışı Termo-Hidrolik Simülatörü <span style="font-size:16px; color:#58a6ff; font-weight:600;">[{mode_label}]</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Cryogenic LNG Pipeline Thermal Ingress, Hydraulic Pressure Drop & Near-Wall / Bulk Flashing Risk Engine</div>', unsafe_allow_html=True)
 
-u_t = _unit_label_temp(disp_temp_unit)
-u_p = _unit_label_press(disp_press_unit)
-u_f = _unit_label_flow(disp_flow_unit)
+u_t = t_unit
+u_p = p_unit
+u_f = flow_unit
 
 # Flashing Banner
 if is_3d_mode:
     has_flashed = sim_results.has_wall_flashed or sim_results.has_bulk_flashed
-    wall_t_d = _t_show(sim_results.wall_temperature_k[-1], disp_temp_unit)
+    wall_t_d = _t_show(sim_results.wall_temperature_k[-1], t_unit)
     if sim_results.has_wall_flashed and not sim_results.has_bulk_flashed:
         st.markdown(f"""
         <div class="status-alert-box">
@@ -563,7 +620,7 @@ if is_3d_mode:
         </div>
         """, unsafe_allow_html=True)
     else:
-        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, disp_press_unit)
+        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, p_unit)
         st.markdown(f"""
         <div class="status-safe-box">
             ✓ <b>GÜVENLİ İŞLETME: HEM ÇEPER HEM YIĞIN TAM SIVI FAZDA</b><br/>
@@ -580,7 +637,7 @@ else:
         </div>
         """, unsafe_allow_html=True)
     else:
-        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, disp_press_unit)
+        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, p_unit)
         st.markdown(f"""
         <div class="status-safe-box">
             ✓ <b>GÜVENLİ İŞLETME: TEK FAZ SIVI AKIŞI KORUNUYOR</b><br/>
@@ -607,13 +664,13 @@ else:
 
 delta_p_pa = sim_results.total_pressure_drop_pa
 
-outlet_t_d = _t_show(outlet_t_k, disp_temp_unit)
-delta_t_d = _t_show(delta_t_k, disp_temp_unit)  # K delta == °C delta
-outlet_p_d = _p_show(outlet_p_pa, disp_press_unit)
-delta_p_d = _p_show(delta_p_pa, disp_press_unit)
-outlet_psat_d = _p_show(outlet_psat_pa, disp_press_unit)
-delta_psat_d = _p_show(delta_psat_pa, disp_press_unit)
-min_margin_d = _p_show(min_margin_pa, disp_press_unit)
+outlet_t_d = _t_show(outlet_t_k, t_unit)
+delta_t_d = delta_from_si("temperature", delta_t_k, t_unit)  # sıcaklık farkı: offset yok
+outlet_p_d = _p_show(outlet_p_pa, p_unit)
+delta_p_d = _p_show(delta_p_pa, p_unit)
+outlet_psat_d = _p_show(outlet_psat_pa, p_unit)
+delta_psat_d = _p_show(delta_psat_pa, p_unit)
+min_margin_d = _p_show(min_margin_pa, p_unit)
 heat_kw = sim_results.total_heat_ingress_w / 1000.0
 
 with c1:
@@ -654,7 +711,7 @@ with c4:
     """, unsafe_allow_html=True)
 
 with c5:
-    m_flow_d = _m_show(mass_flow_kg_s, disp_flow_unit)
+    m_flow_d = _m_show(mass_flow_kg_s, flow_unit)
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Toplam Isı Girişi Q_tot</div>
@@ -701,11 +758,11 @@ omega_mech = calculate_thermal_contraction_and_omega_loop(pipe_spec, anchor_dist
 with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik Doğrulama", expanded=True):
     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
     bog_kg_s = terminal_ops.bog_rate_kg_h / 3600.0
-    p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, disp_press_unit)
-    surge_d = _p_show(surge_mech["actual_surge_bar"] * 1e5, disp_press_unit)
-    peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, disp_press_unit)
+    p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, p_unit)
+    surge_d = _p_show(surge_mech["actual_surge_bar"] * 1e5, p_unit)
+    peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, p_unit)
     with col_t1:
-        st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{_m_show(bog_kg_s, disp_flow_unit):.2f} {u_f}</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
+        st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{_m_show(bog_kg_s, flow_unit):.2f} {u_f}</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
     with col_t2:
         st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} m)</span>", unsafe_allow_html=True)
     with col_t3:

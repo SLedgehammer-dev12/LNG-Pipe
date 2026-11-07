@@ -53,6 +53,8 @@ def test_terminal_3d_has_rack_manifold_gradient_and_inspector(sample_simulation_
     assert "main_z" in lowered
     assert "ret_z" in lowered
     assert "min_centerline_clearance" in lowered
+    assert "offsetpolyline" in lowered
+    assert "paralleloffset" in lowered
 
 
 def test_terminal_3d_uses_return_line_simulation(sample_simulation_results):
