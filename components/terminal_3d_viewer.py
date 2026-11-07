@@ -661,8 +661,9 @@ def generate_terminal_3d_html(
     // 1. LUP Dolphin (Loading / Unloading Platform)
     const lupPlatform = createDolphin(-120, 0, 36, 48, 12, 6, "LUP Dolphin");
 
-    // Berthing dolphin (kevale/dofen) right next to the vessel for mooring & manifolds
-    const berthDolphin = createDolphin(-162, 0, 24, 34, 10, 4, "Gemi Yanı Dofeni");
+    // Berthing dolphin (kevale/dofen) between LUP and vessel for mooring & manifolds
+    // Positioned on the loading side, between LUP deck edge (-132) and ship (-150)
+    const berthDolphin = createDolphin(-138, 0, 24, 34, 10, 4, "Berthing Dolfeni");
 
     // Mooring dolphins alongside the ship (port side, away from LUP) with bollards for mooring lines
     // Based on reference photos: concrete mooring platforms with bollards & fenders
@@ -861,12 +862,12 @@ def generate_terminal_3d_html(
     outerWall.receiveShadow = true;
     tankGroup.add(outerWall);
 
-    // Domed (conical prestressed-concrete) roof on the outer wall
+    // Domed (low-profile prestressed-concrete) roof on the outer wall
     const roof = new THREE.Mesh(
-      new THREE.CylinderGeometry(60, 7, 18, 64),
+      new THREE.CylinderGeometry(62, 50, 10, 64),
       new THREE.MeshStandardMaterial({{ color: 0x9ca3af, roughness: 0.7 }})
     );
-    roof.position.set(TANK_X, 65, 0);
+    roof.position.set(TANK_X, 63, 0);
     roof.castShadow = true;
     roof.receiveShadow = true;
     tankGroup.add(roof);
