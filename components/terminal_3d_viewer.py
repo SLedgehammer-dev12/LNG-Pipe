@@ -15,6 +15,7 @@ def generate_terminal_3d_html(
     main_material: str = "",
     return_material: str = "",
     return_flow_kg_s: float = 0.0,
+    return_results=None,
 ) -> str:
     """Generates a self-contained responsive Three.js 3D WebGL Digital Twin of the LNG Terminal.
 
@@ -71,6 +72,35 @@ def generate_terminal_3d_html(
         "vapor_bar": [round(station_psat[i] / 1e5, 3) for i in idx],
         "margin_bar": [round(station_margin[i] / 1e5, 3) for i in idx],
     }
+    if return_results is not None:
+        if isinstance(return_results, Simulation3DResults):
+            rt, rp, rps, rmg = (
+                return_results.bulk_temperature_k,
+                return_results.pressure_pa,
+                return_results.wall_vapor_pressure_pa,
+                return_results.wall_flashing_margin_pa,
+            )
+        else:
+            rt, rp, rps, rmg = (
+                return_results.temperature_k,
+                return_results.pressure_pa,
+                return_results.vapor_pressure_pa,
+                return_results.flashing_margin_pa,
+            )
+        rn = len(return_results.distance_m)
+        rstep = max(1, rn // 60)
+        ridx = list(range(0, rn, rstep))
+        if ridx[-1] != rn - 1:
+            ridx.append(rn - 1)
+        return_stations = {
+            "distance_m": [round(return_results.distance_m[i], 1) for i in ridx],
+            "temp_c": [round(rt[i] - 273.15, 2) for i in ridx],
+            "pressure_bar": [round(rp[i] / 1e5, 3) for i in ridx],
+            "vapor_bar": [round(rps[i] / 1e5, 3) for i in ridx],
+            "margin_bar": [round(rmg[i] / 1e5, 3) for i in ridx],
+        }
+    else:
+        return_stations = stations
     t_min_c = min(stations["temp_c"])
     t_max_c = max(stations["temp_c"])
 
@@ -115,6 +145,7 @@ def generate_terminal_3d_html(
         "main_material": main_mat,
         "return_material": ret_mat,
         "stations": stations,
+        "return_stations": return_stations,
     }
 
     html = f"""
@@ -622,11 +653,11 @@ def generate_terminal_3d_html(
     const retRadius = Math.max(0.4, telemetry.return_id_mm / 210.0);
 
     // Temperature-driven 1D gradient texture (TubeGeometry uv.x runs along length).
-    function buildTempGradient(reverse) {{
+    function buildTempGradient(stationData, reverse) {{
       const canvas = document.createElement('canvas');
       canvas.width = 256; canvas.height = 1;
       const ctx = canvas.getContext('2d');
-      const temps = telemetry.stations.temp_c;
+      const temps = stationData.temp_c;
       const tMin = Math.min.apply(null, temps);
       const tMax = Math.max.apply(null, temps);
       const cold = new THREE.Color(0x1f6feb);
@@ -647,8 +678,8 @@ def generate_terminal_3d_html(
       tex.needsUpdate = true;
       return tex;
     }}
-    const tempTex = buildTempGradient(false);
-    const tempTexRet = buildTempGradient(true);
+    const tempTex = buildTempGradient(telemetry.stations, false);
+    const tempTexRet = buildTempGradient(telemetry.return_stations || telemetry.stations, true);
 
     function buildPipeCurve(zOffset, loopExtZ, loopDir) {{
       const D = loopExtZ * loopDir;
@@ -752,7 +783,8 @@ def generate_terminal_3d_html(
     // Click-to-inspect fluid state at any point on the supply/return pipe
     const raycaster = new THREE.Raycaster();
     const pointer = new THREE.Vector2();
-    const stations = telemetry.stations;
+    const mainStations = telemetry.stations;
+    const retStations = telemetry.return_stations || telemetry.stations;
     renderer.domElement.addEventListener('click', (event) => {{
       const rect = renderer.domElement.getBoundingClientRect();
       pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
@@ -761,16 +793,18 @@ def generate_terminal_3d_html(
       const hits = raycaster.intersectObjects([mainPipe, recircPipe], false);
       if (hits.length === 0) return;
       const hit = hits[0];
+      const isReturn = hit.object.userData.lineType === "return";
+      const st = isReturn ? retStations : mainStations;
       const frac = hit.uv ? Math.min(1, Math.max(0, hit.uv.x)) : 0.5;
-      const idx = Math.round(frac * (stations.distance_m.length - 1));
-      const lineLabel = hit.object.userData.lineType === "return" ? "Dönüş Hattı" : "Ana LNG Hattı";
+      const idx = Math.round(frac * (st.distance_m.length - 1));
+      const lineLabel = isReturn ? "Dönüş Hattı" : "Ana LNG Hattı";
       document.getElementById('pick-body').innerHTML =
         '<div class="hud-row"><span>Hat:</span><span class="hud-val">' + lineLabel + '</span></div>' +
-        '<div class="hud-row"><span>Mesafe:</span><span class="hud-val">' + stations.distance_m[idx].toFixed(1) + ' m</span></div>' +
-        '<div class="hud-row"><span>Sıcaklık:</span><span class="hud-val">' + stations.temp_c[idx].toFixed(2) + ' °C</span></div>' +
-        '<div class="hud-row"><span>Basınç:</span><span class="hud-val">' + stations.pressure_bar[idx].toFixed(3) + ' bar</span></div>' +
-        '<div class="hud-row"><span>Psat:</span><span class="hud-val">' + stations.vapor_bar[idx].toFixed(3) + ' bar</span></div>' +
-        '<div class="hud-row"><span>Marj:</span><span class="hud-val">' + stations.margin_bar[idx].toFixed(3) + ' bar</span></div>';
+        '<div class="hud-row"><span>Mesafe:</span><span class="hud-val">' + st.distance_m[idx].toFixed(1) + ' m</span></div>' +
+        '<div class="hud-row"><span>Sıcaklık:</span><span class="hud-val">' + st.temp_c[idx].toFixed(2) + ' °C</span></div>' +
+        '<div class="hud-row"><span>Basınç:</span><span class="hud-val">' + st.pressure_bar[idx].toFixed(3) + ' bar</span></div>' +
+        '<div class="hud-row"><span>Psat:</span><span class="hud-val">' + st.vapor_bar[idx].toFixed(3) + ' bar</span></div>' +
+        '<div class="hud-row"><span>Marj:</span><span class="hud-val">' + st.margin_bar[idx].toFixed(3) + ' bar</span></div>';
       document.getElementById('pick-panel').style.display = 'block';
     }});
 

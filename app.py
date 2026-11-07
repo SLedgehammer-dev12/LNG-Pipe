@@ -524,6 +524,17 @@ sim_results = run_simulation(
     is_3d_mode, n_radial, n_azimuthal, n_axial
 )
 
+# Return (recirculation) line: 1D solve for real station data in the 3D inspector.
+if return_mass_flow_kg_s > 0.0:
+    return_results = run_simulation(
+        length_m, return_diameter_mm, return_wall_thickness_mm, PIPE_MATERIALS[pipe_mat_name],
+        roughness_um, inclination_deg, is_pure_methane, comp_tuple, inlet_t_c, inlet_p_bar,
+        return_mass_flow_kg_s, layers_tuple, amb_temp_c, wind_speed_m_s,
+        False, 8, 8, max(20, n_axial)
+    )
+else:
+    return_results = None
+
 # --- MAIN DISPLAY ---
 mode_label = "3D Sonlu Hacimler (Silindirik r, θ, z)" if is_3d_mode else "1D Sonlu Hacimler (Eksenel)"
 st.markdown(f'<div class="main-header">❄️ LNG Boru Akışı Termo-Hidrolik Simülatörü <span style="font-size:16px; color:#58a6ff; font-weight:600;">[{mode_label}]</span></div>', unsafe_allow_html=True)
@@ -733,6 +744,7 @@ with tab_3d_terminal:
         main_material=pipe_mat_name,
         return_material=pipe_mat_name,
         return_flow_kg_s=return_mass_flow_kg_s,
+        return_results=return_results,
     )
     st.components.v1.html(html_terminal_3d, height=660, scrolling=False)
 

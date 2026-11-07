@@ -53,3 +53,19 @@ def test_terminal_3d_has_rack_manifold_gradient_and_inspector(sample_simulation_
     assert "main_z" in lowered
     assert "ret_z" in lowered
     assert "min_centerline_clearance" in lowered
+
+
+def test_terminal_3d_uses_return_line_simulation(sample_simulation_results):
+    from core.fluids import FluidManager
+    from core.heat_transfer import InsulationLayer, PipeThermalModel
+    from core.solver import PipelineSolver, PipelineSimulationConfig
+
+    cfg = PipelineSimulationConfig(length_m=500.0, inner_diameter_m=0.10, num_cells=20)
+    fm = FluidManager(fluid_type="pure_methane")
+    layers = [InsulationLayer(name="PIR", thickness_m=0.05, thermal_conductivity=0.024)]
+    tm = PipeThermalModel(inner_diameter_m=0.10, wall_thickness_m=0.006, insulation_layers=layers)
+    return_results = PipelineSolver(fm, tm, cfg).solve()
+
+    html = generate_terminal_3d_html(sample_simulation_results, return_results=return_results)
+    assert "return_stations" in html
+    assert "retStations" in html
