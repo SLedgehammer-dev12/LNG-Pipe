@@ -503,10 +503,12 @@ if is_3d_mode:
         n_radial = st.slider("Radyal Katman Sayısı (Nr)", min_value=6, max_value=24, value=12, step=2)
         n_azimuthal = st.slider("Açısal Dilim Sayısı (Nθ)", min_value=6, max_value=24, value=12, step=2)
         n_axial = st.slider("Eksenel Dilim Sayısı (Nz)", min_value=20, max_value=100, value=50, step=10)
+        theme = st.selectbox("🌞 / 🌙 Tema", ["Gündüz", "Gece"], index=0)
 else:
     n_radial = 8
     n_azimuthal = 8
     n_axial = 100
+    theme = "Gündüz"
 
 
 # --- GÖSTERİM BİRİM DÖNÜŞÜMLERİ (hesaplama içeri K / Pa / kg/s kalır) ---
@@ -808,6 +810,7 @@ with tab_3d_terminal:
         return_results=return_results,
         length_m=length_m,
         anchor_dist_m=anchor_dist_m,
+        theme=theme,
     )
     st.components.v1.html(html_terminal_3d, height=660, scrolling=False)
 

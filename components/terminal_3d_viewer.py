@@ -18,17 +18,19 @@ def generate_terminal_3d_html(
     return_results=None,
     length_m: float | None = None,
     anchor_dist_m: float = 180.0,
+    theme: str = "Gündüz",
 ) -> str:
     """Generates a self-contained responsive Three.js 3D WebGL Digital Twin of the LNG Terminal.
 
     Visualizes:
-    - LNG Carrier berthed offshore
+    - LNG Carrier berthed offshore with mooring & berthing dolphins
     - LUP Dolphin (Loading / Unloading Platform) with Marine Loading Arms (MLAs) & ESDVs
     - APD Dolphins (Approach Trestle Piles)
     - Omega Dolphins with 3D thermal expansion loops & TRVs
     - Onshore Cryogenic LNG Full-Containment Tank
     - P-201 Recirculation Pump and continuous cooldown return line
     - Pipe rack, long-radius elbows, manifold and temperature-gradient pipes
+    - Day/Night theme switchable sea, sky and lighting
     - Click-to-inspect fluid state along the pipe
     - Camera presets and interactive inspector
     """
@@ -371,11 +373,17 @@ def generate_terminal_3d_html(
     controls.maxPolarAngle = Math.PI / 2 - 0.02;
     controls.target.set(60, 10, 0);
 
+    // Day/Night theme colors for sea & sky
+    const theme = "{theme}";
+    const isNight = theme === "Gece";
+    const ambientIntensity = isNight ? 0.25 : 0.6;
+    const fogColor = isNight ? new THREE.Color(0x050a14) : new THREE.Color(0x1a2b3c);
+
     // Lighting
-    const ambientLight = new THREE.AmbientLight(0xdde8f5, 0.55);
+    const ambientLight = new THREE.AmbientLight(0xdde8f5, ambientIntensity);
     scene.add(ambientLight);
 
-    const sunLight = new THREE.DirectionalLight(0xfff6e6, 1.1);
+    const sunLight = new THREE.DirectionalLight(0xfff6e6, isNight ? 0.4 : 1.1);
     sunLight.position.set(-150, 250, 150);
     sunLight.castShadow = true;
     sunLight.shadow.mapSize.width = 2048;
@@ -389,9 +397,13 @@ def generate_terminal_3d_html(
     sunLight.shadow.camera.bottom = -d;
     scene.add(sunLight);
 
-    const blueFill = new THREE.DirectionalLight(0x388bfd, 0.35);
+    const blueFill = new THREE.DirectionalLight(0x388bfd, isNight ? 0.15 : 0.35);
     blueFill.position.set(150, 80, -100);
     scene.add(blueFill);
+
+    // Set scene fog & background based on theme
+    scene.fog = new THREE.FogExp2(fogColor, 0.0007);
+    scene.background = new THREE.Color(fogColor);
 
     // Dynamic terminal footprint: ship-to-tank distance follows the user line length.
     const lengthScale = Math.max(0.5, Math.min(2.5, telemetry.length_scale || 1.0));
@@ -424,28 +436,33 @@ def generate_terminal_3d_html(
     controls.target.set(SCENE_CX, 10, 0);
     controls.update();
 
-    // Sea Surface — calm animated waves with shore gradient
-    const waterGeo = new THREE.PlaneGeometry(4200, 1600, 64, 64);
+    // Sea Surface — calm small waves, complete surface coverage, sea blue
+    const waterGeo = new THREE.PlaneGeometry(5000, 2000, 64, 64);
     const waterCenterX = ROUTE_END * 0.5;
     const shoreLocalX = SEAWALL_X - waterCenterX;
+    const deepColor = isNight ? new THREE.Color(0x050a14) : new THREE.Color(0x16425b);
+    const shoreColor = isNight ? new THREE.Color(0x1a2b3c) : new THREE.Color(0x3d8ca6);
+    const foamColor = isNight ? new THREE.Color(0x4a5a6a) : new THREE.Color(0xa8d8ea);
     const waterMat = new THREE.ShaderMaterial({{
       uniforms: {{
         uTime: {{ value: 0.0 }},
         uShoreX: {{ value: shoreLocalX }},
-        uDeepColor: {{ value: new THREE.Color(0x02101e) }},
-        uShoreColor: {{ value: new THREE.Color(0x1b4a6b) }},
-        uFoamColor: {{ value: new THREE.Color(0x9fd3e8) }}
+        uDeepColor: {{ value: deepColor }},
+        uShoreColor: {{ value: shoreColor }},
+        uFoamColor: {{ value: foamColor }},
+        uIsNight: {{ value: isNight ? 1.0 : 0.0 }}
       }},
       vertexShader: `
         uniform float uTime;
         uniform float uShoreX;
+        uniform float uIsNight;
         varying float vShoreDist;
         varying vec3 vWorldPos;
         void main(){{
           vec3 pos = position;
-          // Calm long-wavelength swell
-          float wave = 0.14 * sin(pos.x * 0.018 + uTime * 1.1)
-                     + 0.10 * cos(pos.y * 0.025 - uTime * 0.8);
+          // Small calm waves (reduced amplitude)
+          float wave = 0.06 * sin(pos.x * 0.022 + uTime * 0.9)
+                     + 0.04 * cos(pos.y * 0.030 - uTime * 0.6);
           pos.z += wave; // local z -> world up after Rx(-90)
           vec4 worldPos = modelMatrix * vec4(pos, 1.0);
           vWorldPos = worldPos.xyz;
@@ -455,18 +472,22 @@ def generate_terminal_3d_html(
       `,
       fragmentShader: `
         uniform float uTime;
+        uniform float uIsNight;
         uniform vec3 uDeepColor;
         uniform vec3 uShoreColor;
         uniform vec3 uFoamColor;
         varying float vShoreDist;
         varying vec3 vWorldPos;
         void main(){{
-          float shore = smoothstep(0.0, 70.0, vShoreDist);
+          float shore = smoothstep(0.0, 80.0, vShoreDist);
           vec3 color = mix(uShoreColor, uDeepColor, shore);
-          float waveFoam = smoothstep(0.0, 16.0, vShoreDist)
-                         * (0.45 + 0.45 * sin(uTime * 2.6 + vWorldPos.x * 0.08));
+          float waveFoam = smoothstep(0.0, 12.0, vShoreDist)
+                         * (0.30 + 0.30 * sin(uTime * 2.2 + vWorldPos.x * 0.10));
           color = mix(color, uFoamColor, waveFoam);
-          gl_FragColor = vec4(color, 0.94);
+          if (uIsNight > 0.5) {{
+            color *= 0.55;
+          }}
+          gl_FragColor = vec4(color, 0.96);
         }}
       `,
       transparent: true
@@ -643,6 +664,44 @@ def generate_terminal_3d_html(
     // Berthing dolphin (kevale/dofen) right next to the vessel for mooring & manifolds
     const berthDolphin = createDolphin(-162, 0, 24, 34, 10, 4, "Gemi Yanı Dofeni");
 
+    // Mooring dolphins alongside the ship (port side, away from LUP) with bollards for mooring lines
+    // Based on reference photos: concrete mooring platforms with bollards & fenders
+    const mooringDolphinMat = new THREE.MeshStandardMaterial({{ color: 0x8c959f, roughness: 0.85 }});
+    const mooringDolphinPositions = [
+      {{ x: -172, z: -105, name: "Mooring Dolfeni - Burun" }},
+      {{ x: -172, z: 0,    name: "Mooring Dolfeni - Orta" }},
+      {{ x: -172, z: 105,  name: "Mooring Dolfeni - Kıpır" }}
+    ];
+    mooringDolphinPositions.forEach((pos) => {{
+      const md = createDolphin(pos.x, pos.z, 16, 22, 9, 4, pos.name);
+      // Bollards on mooring dolphin for ship mooring lines
+      [-6, 6].forEach((bx) => {{
+        [-8, 0, 8].forEach((bz) => {{
+          const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 1.8, 10), bollardMat);
+          bollard.position.set(bx, 10.5, bz);
+          md.add(bollard);
+        }});
+      }});
+      // Fenders (rubber bumpers) facing ship
+      const fender = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 3, 12), new THREE.MeshStandardMaterial({{ color: 0x2a1a1a, roughness: 0.9 }}));
+      fender.position.set(-2, 11, 0);
+      fender.rotation.z = Math.PI / 2;
+      md.add(fender);
+      terminalGroup.add(md);
+    }});
+
+    // Mooring lines (ropes) from mooring dolphins to ship bollards
+    const ropeMat = new THREE.LineBasicMaterial({{ color: 0x5d4037 }});
+    mooringDolphinPositions.forEach((pos) => {{
+      const ropeGeo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(pos.x - 6, 10.5, pos.z - 8),
+        new THREE.Vector3(-174, 18, pos.z),
+        new THREE.Vector3(-174, 18, pos.z + 8)
+      ]);
+      const rope = new THREE.Line(ropeGeo, ropeMat);
+      terminalGroup.add(rope);
+    }});
+
     // Marine Loading Arms (MLAs): LUP dolphin outer edge -> vessel manifold
     for (let i = 0; i < 4; i++) {{
       const armGroup = new THREE.Group();
@@ -685,85 +744,89 @@ def generate_terminal_3d_html(
     esdvStation.add(handwheel);
     terminalGroup.add(esdvStation);
 
-    // 2. LNG Carrier Vessel (Moss-type spherical cargo tanks)
+    // 2. LNG Carrier Vessel (Moss-type spherical cargo tanks, based on reference photos)
     const shipGroup = new THREE.Group();
     shipGroup.position.set(-150, 0, 0);
+    shipGroup.rotation.y = 0; // bow facing -z (toward LUP/dolphins)
 
-    // Hull above waterline (grey/white)
-    const hullAboveMat = new THREE.MeshStandardMaterial({{ color: 0xd0d7de, roughness: 0.5, metalness: 0.2 }});
-    const hullAbove = new THREE.Mesh(new THREE.BoxGeometry(48, 10, 300), hullAboveMat);
-    hullAbove.position.set(0, 13, 0);
-    hullAbove.castShadow = true;
-    hullAbove.receiveShadow = true;
-    shipGroup.add(hullAbove);
+    // === HULL ===
+    // Red hull (matches reference photos: red hull below deck)
+    const hullRedMat = new THREE.MeshStandardMaterial({{ color: 0xb22222, roughness: 0.6 }});
+    const hullRed = new THREE.Mesh(new THREE.BoxGeometry(46, 11, 320), hullRedMat);
+    hullRed.position.set(0, 2, 0);
+    hullRed.castShadow = true;
+    hullRed.receiveShadow = true;
+    shipGroup.add(hullRed);
 
-    // Hull below waterline (red antifouling)
-    const hullBelow = new THREE.Mesh(new THREE.BoxGeometry(48, 6, 300), new THREE.MeshStandardMaterial({{ color: 0x8b1a1a, roughness: 0.7 }}));
-    hullBelow.position.set(0, -3, 0);
-    hullBelow.castShadow = true;
-    hullBelow.receiveShadow = true;
-    shipGroup.add(hullBelow);
+    // White upper hull / deck house sides
+    const hullWhite = new THREE.Mesh(new THREE.BoxGeometry(44, 7, 310), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.5 }}));
+    hullWhite.position.set(0, 13, 0);
+    hullWhite.castShadow = true;
+    hullWhite.receiveShadow = true;
+    shipGroup.add(hullWhite);
 
-    // Keel
-    const keel = new THREE.Mesh(new THREE.BoxGeometry(44, 3, 296), new THREE.MeshStandardMaterial({{ color: 0x4a1a1a, roughness: 0.8 }}));
-    keel.position.set(0, -4.5, 0);
+    // Keel / bottom
+    const keel = new THREE.Mesh(new THREE.BoxGeometry(42, 4, 314), new THREE.MeshStandardMaterial({{ color: 0x2a1a1a, roughness: 0.8 }}));
+    keel.position.set(0, -5, 0);
     keel.castShadow = true;
     shipGroup.add(keel);
 
-    // Moss-type spherical cargo tanks (5 along centerline)
-    const tankMat = new THREE.MeshStandardMaterial({{ color: 0xe6edf3, roughness: 0.4, metalness: 0.2 }});
-    const tankCapMat = new THREE.MeshStandardMaterial({{ color: 0x00d2ff, roughness: 0.3, metalness: 0.4 }});
-    const tankZs = [-110, -55, 0, 55, 110];
+    // === MOSS SPHERICAL CARGO TANKS ===
+    // Prominent spheres along centerline (cream / pale yellow like reference photos)
+    const tankMat = new THREE.MeshStandardMaterial({{ color: 0xe8f0e0, roughness: 0.45, metalness: 0.15 }});
+    const tankCapMat = new THREE.MeshStandardMaterial({{ color: 0x9fd3ad, roughness: 0.4, metalness: 0.3 }});
+    const tankZs = [-120, -60, 0, 60, 120];
     tankZs.forEach((zPos) => {{
-      const tank = new THREE.Mesh(new THREE.SphereGeometry(9, 32, 24), tankMat);
-      tank.position.set(0, 14, zPos);
+      const tank = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 24), tankMat);
+      tank.position.set(0, 16, zPos);
       tank.castShadow = true;
       tank.receiveShadow = true;
       shipGroup.add(tank);
-      // Tank dome cover (upper hemisphere hint)
-      const cap = new THREE.Mesh(new THREE.SphereGeometry(9, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5), tankCapMat);
-      cap.position.set(0, 14, zPos);
+      // Upper dome / cap hint
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5), tankCapMat);
+      cap.position.set(0, 16, zPos);
       cap.rotation.x = -Math.PI / 2;
       shipGroup.add(cap);
     }});
 
-    // Bridge / superstructure at stern (+z)
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(30, 14, 24), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.4 }}));
-    bridge.position.set(0, 23, 120);
+    // === BRIDGE / SUPERSTRUCTURE at stern (+z) ===
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(30, 15, 26), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.4 }}));
+    bridge.position.set(0, 24, 125);
     bridge.castShadow = true;
     bridge.receiveShadow = true;
     shipGroup.add(bridge);
     // Bridge windows (front face toward bow, -z side)
-    const winZ = 108;
-    [-10, 0, 10].forEach((wx) => {{
-      const win = new THREE.Mesh(new THREE.BoxGeometry(5, 6, 1), windowMat);
-      win.position.set(wx, 21, winZ);
+    const winZ = 113;
+    [-12, 0, 12].forEach((wx) => {{
+      const win = new THREE.Mesh(new THREE.BoxGeometry(6, 7, 1), windowMat);
+      win.position.set(wx, 20, winZ);
       shipGroup.add(win);
     }});
     // Funnel near bridge
-    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 6, 16), funnelMat);
-    funnel.position.set(0, 19, 106);
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 7, 16), funnelMat);
+    funnel.position.set(0, 21, 110);
     funnel.castShadow = true;
     shipGroup.add(funnel);
 
-    // Deck railing along both sides
-    const railY = 16.5;
-    [24, -24].forEach((rx) => {{
-      const sideRail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1, 250), railingMat);
+    // === DECK RAILING ===
+    const railY = 17.5;
+    [23, -23].forEach((rx) => {{
+      const sideRail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.1, 260), railingMat);
       sideRail.position.set(rx, railY, 0);
       shipGroup.add(sideRail);
     }});
-    [-130, 130].forEach((rz) => {{
-      const endRail = new THREE.Mesh(new THREE.BoxGeometry(50, 1, 0.25), railingMat);
+    [-140, 140].forEach((rz) => {{
+      const endRail = new THREE.Mesh(new THREE.BoxGeometry(44, 1.1, 0.25), railingMat);
       endRail.position.set(0, railY, rz);
       shipGroup.add(endRail);
     }});
 
-    // Bollards / manifold points at midship (toward LUP side)
-    [-22, 22].forEach((bx) => {{
-      [-5, 5].forEach((bz) => {{
-        const bollard = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 2, 12), bollardMat);
-        bollard.position.set(bx, 17, bz);
+    // === BOLLARDS / MANIFOLD POINTS at midship (toward LUP side, -x) ===
+    // Mooring bollards along port side facing dolphins
+    [-24, -24].forEach((bx) => {{
+      [-40, -15, 10, 35, 60].forEach((bz) => {{
+        const bollard = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 2.2, 12), bollardMat);
+        bollard.position.set(bx, 18, bz);
         shipGroup.add(bollard);
       }});
     }});
