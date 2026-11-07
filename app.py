@@ -785,7 +785,7 @@ tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report =
 with tab_schematic:
     st.markdown("##### 🗺️ İskele (Jetty) - Kara Tankı Transfer & Sirkülasyon Şematiği (P&ID)")
     st.caption("LUP dolfeninden kara depolama tankına ve sirkülasyon pompası (P-201) ile geri dönüş hattına kadar tüm proses hattını inceleyin. Ekipman detayları için üzerlerine tıklayın.")
-    html_schematic_2d = generate_schematic_2d_html(sim_results, height_px=620)
+    html_schematic_2d = generate_schematic_2d_html(sim_results, height_px=620, length_m=length_m, anchor_dist_m=anchor_dist_m)
     st.components.v1.html(html_schematic_2d, height=640, scrolling=False)
 
 with tab_3d_terminal:
@@ -802,6 +802,8 @@ with tab_3d_terminal:
         return_material=pipe_mat_name,
         return_flow_kg_s=return_mass_flow_kg_s,
         return_results=return_results,
+        length_m=length_m,
+        anchor_dist_m=anchor_dist_m,
     )
     st.components.v1.html(html_terminal_3d, height=660, scrolling=False)
 

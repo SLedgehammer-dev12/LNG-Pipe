@@ -72,3 +72,22 @@ def test_terminal_3d_uses_return_line_simulation(sample_simulation_results):
     html = generate_terminal_3d_html(sample_simulation_results, return_results=return_results)
     assert "return_stations" in html
     assert "retStations" in html
+
+
+def test_dynamic_omega_count_syncs_2d_and_3d(sample_simulation_results):
+    html2 = generate_schematic_2d_html(sample_simulation_results, length_m=1000.0, anchor_dist_m=180.0)
+    html3 = generate_terminal_3d_html(sample_simulation_results, length_m=1000.0, anchor_dist_m=180.0)
+    assert "OMEGA-6 DOLFENİ" in html2
+    assert "OMEGA-7 DOLFENİ" not in html2
+    assert '"omega_count": 6' in html3
+    assert "Ω: 6" in html2
+
+
+def test_short_and_long_line_omega_counts(sample_simulation_results):
+    short = generate_schematic_2d_html(sample_simulation_results, length_m=100.0, anchor_dist_m=180.0)
+    assert "OMEGA-1 DOLFENİ" in short
+    assert "OMEGA-2 DOLFENİ" not in short
+
+    long = generate_schematic_2d_html(sample_simulation_results, length_m=3000.0, anchor_dist_m=180.0)
+    assert "OMEGA-8 DOLFENİ" in long
+    assert "OMEGA-9 DOLFENİ" not in long

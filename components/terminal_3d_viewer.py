@@ -16,6 +16,8 @@ def generate_terminal_3d_html(
     return_material: str = "",
     return_flow_kg_s: float = 0.0,
     return_results=None,
+    length_m: float | None = None,
+    anchor_dist_m: float = 180.0,
 ) -> str:
     """Generates a self-contained responsive Three.js 3D WebGL Digital Twin of the LNG Terminal.
 
@@ -126,8 +128,13 @@ def generate_terminal_3d_html(
         f'<span>Sıcaklık gradyanı: {t_min_c:.1f} … {t_max_c:.1f} °C</span></div>'
     )
 
+    route_length = length_m if length_m else cfg.length_m
+    omega_count = max(1, min(8, int(round(route_length / max(anchor_dist_m, 50.0)))))
+
     telemetry = {
-        "length_m": cfg.length_m,
+        "length_m": route_length,
+        "anchor_dist_m": anchor_dist_m,
+        "omega_count": omega_count,
         "diameter_mm": main_id,
         "wall_mm": main_wall,
         "mass_flow": m_flow,
@@ -306,6 +313,10 @@ def generate_terminal_3d_html(
       <div class="hud-row">
         <span>Min. Parlama Marjı (ΔP):</span>
         <span class="hud-val">{margin_min:.2f} bar</span>
+      </div>
+      <div class="hud-row">
+        <span>Hat Uzunluğu / Omega:</span>
+        <span class="hud-val">{route_length:.0f} m / {omega_count} adet</span>
       </div>
       <div class="hud-row" style="margin-top:6px; padding-top:6px; border-top:1px dashed rgba(255,255,255,0.1);">
         <span>Parlama Durumu:</span>
@@ -588,17 +599,38 @@ def generate_terminal_3d_html(
 
     terminalGroup.add(shipGroup);
 
+    // Omega layout: count and placement driven by the user-entered line length.
+    const MAIN_Z = 3.5;
+    const RET_Z = -3.5;
+    const LOOP_EXT = 22.0;
+    const OMEGA_W = 22.0;
+    const ROUTE_START = -132.0;
+    const ROUTE_END = 220.0;
+    const mainRadius = Math.min(3.0, Math.max(0.6, telemetry.diameter_mm / 210.0));
+    const retRadius = Math.min(1.8, Math.max(0.4, telemetry.return_id_mm / 210.0));
+    const parallelOffset = -Math.max(7.0, mainRadius + retRadius + 3.0);
+    const nOmega = Math.max(1, Math.min(8, telemetry.omega_count || 2));
+    const omegaSlot = (ROUTE_END - ROUTE_START) / nOmega;
+    const omegaCenters = [];
+    const omegaStarts = [];
+    for (let k = 0; k < nOmega; k++) {{
+      const x0 = ROUTE_START + omegaSlot * k + (omegaSlot - OMEGA_W) / 2;
+      omegaStarts.push(x0);
+      omegaCenters.push(x0 + OMEGA_W / 2);
+    }}
+
     // 3. APD Dolphins & Trestle Piles along route
     const apdPositions = [-75, -30, 20, 70, 115];
     apdPositions.forEach((x, idx) => {{
       createDolphin(x, 0, 12, 14, 11, 4, `APD-${{idx + 1}}`);
     }});
 
-    // 4. Omega Dolphins with 3D Expansion Loops (Thermal Contraction Absorption)
-    // Omega Dolphin 1
-    const omegaDolphin1 = createDolphin(-5, 26, 28, 42, 11, 6, "Omega Dolfeni 1");
-    // Omega Dolphin 2
-    const omegaDolphin2 = createDolphin(95, 26, 28, 42, 11, 6, "Omega Dolfeni 2");
+    // 4. Omega Dolphins with 3D Expansion Loops (count and size follow line length)
+    const omegaPlatformDepth = LOOP_EXT - parallelOffset + 24.0;
+    const omegaPlatformZ = MAIN_Z + (LOOP_EXT + parallelOffset) / 2.0;
+    omegaCenters.forEach((cx, k) => {{
+      createDolphin(cx, omegaPlatformZ, OMEGA_W + 26.0, omegaPlatformDepth, 11, 6, `Omega Dolfeni ${{k + 1}}`);
+    }});
 
     // 5. Onshore LNG Storage Tank (Full Containment)
     const tankGroup = new THREE.Group();
@@ -646,11 +678,6 @@ def generate_terminal_3d_html(
     terminalGroup.add(tankGroup);
 
     // 6. PIPELINES: supply route plus a true parallel-offset return route.
-    const MAIN_Z = 3.5;
-    const RET_Z = -3.5;
-    const LOOP_EXT = 22.0;
-    const mainRadius = Math.min(3.0, Math.max(0.6, telemetry.diameter_mm / 210.0));
-    const retRadius = Math.min(1.8, Math.max(0.4, telemetry.return_id_mm / 210.0));
 
     // Temperature-driven 1D gradient texture (TubeGeometry uv.x runs along length).
     function buildTempGradient(stationData, reverse) {{
@@ -681,26 +708,38 @@ def generate_terminal_3d_html(
     const tempTex = buildTempGradient(telemetry.stations, false);
     const tempTexRet = buildTempGradient(telemetry.return_stations || telemetry.stations, true);
 
-    function pipeControlPoints(zOffset, loopExtZ, loopDir) {{
-      const D = loopExtZ * loopDir;
-      return [
-        new THREE.Vector3(-132, 14, zOffset),
-        new THREE.Vector3(-20, 14, zOffset),
-        // Omega Loop 1: iki paralel yateral bacak + 180° dönüş (plan görünümünde Ω)
-        new THREE.Vector3(-16, 14, zOffset),
-        new THREE.Vector3(-16, 14, zOffset + D),
-        new THREE.Vector3(6, 14, zOffset + D),
-        new THREE.Vector3(6, 14, zOffset),
-        new THREE.Vector3(80, 14, zOffset),
-        // Omega Loop 2
-        new THREE.Vector3(84, 14, zOffset),
-        new THREE.Vector3(84, 14, zOffset + D),
-        new THREE.Vector3(106, 14, zOffset + D),
-        new THREE.Vector3(106, 14, zOffset),
-        // Karaya çıkış / tank bağlantısı
-        new THREE.Vector3(160, 12, zOffset),
-        new THREE.Vector3(220, 8, zOffset)
-      ];
+    function pipeControlPoints(zOffset, loopExtZ) {{
+      const pts = [new THREE.Vector3(ROUTE_START, 14, zOffset)];
+      omegaStarts.forEach(x0 => {{
+        pts.push(new THREE.Vector3(x0, 14, zOffset));
+        pts.push(new THREE.Vector3(x0, 14, zOffset + loopExtZ));
+        pts.push(new THREE.Vector3(x0 + OMEGA_W, 14, zOffset + loopExtZ));
+        pts.push(new THREE.Vector3(x0 + OMEGA_W, 14, zOffset));
+      }});
+      pts.push(new THREE.Vector3(ROUTE_END - 20, 14, zOffset));
+      pts.push(new THREE.Vector3(ROUTE_END, 8, zOffset));
+      return pts;
+    }}
+
+    // Continuous pipe path: straight runs + rounded (long-radius) elbows.
+    function buildRoundedPath(points, bendR) {{
+      const path = new THREE.CurvePath();
+      const n = points.length;
+      let segStart = points[0].clone();
+      for (let i = 1; i < n - 1; i++) {{
+        const p = points[i], prevP = points[i - 1], nextP = points[i + 1];
+        const dIn = new THREE.Vector3().subVectors(p, prevP).normalize();
+        const dOut = new THREE.Vector3().subVectors(nextP, p).normalize();
+        const angle = Math.acos(THREE.MathUtils.clamp(dIn.dot(dOut), -1, 1));
+        const t = Math.min(bendR * Math.tan(angle / 2), prevP.distanceTo(p) * 0.45, nextP.distanceTo(p) * 0.45);
+        const start = p.clone().addScaledVector(dIn, -t);
+        const end = p.clone().addScaledVector(dOut, t);
+        if (segStart.distanceTo(start) > 1e-6) path.add(new THREE.LineCurve3(segStart, start));
+        path.add(new THREE.QuadraticBezierCurve3(start, p, end));
+        segStart = end;
+      }}
+      path.add(new THREE.LineCurve3(segStart, points[n - 1]));
+      return path;
     }}
 
     // True horizontal parallel offset of a polyline (mitered corners), so the
@@ -734,9 +773,9 @@ def generate_terminal_3d_html(
       return out;
     }}
 
-    const mainPts = pipeControlPoints(MAIN_Z, LOOP_EXT, +1);
-    const mainCurve = new THREE.CatmullRomCurve3(mainPts, false, 'catmullrom', 0.15);
-    const mainPipeGeo = new THREE.TubeGeometry(mainCurve, 160, mainRadius, 18, false);
+    const mainPts = pipeControlPoints(MAIN_Z, LOOP_EXT);
+    const mainCurve = buildRoundedPath(mainPts, Math.max(2.5, mainRadius * 2.5));
+    const mainPipeGeo = new THREE.TubeGeometry(mainCurve, 240, mainRadius, 18, false);
     const mainPipeMat = new THREE.MeshStandardMaterial({{
       map: tempTex, color: 0xffffff, roughness: 0.25, metalness: 0.65,
       emissive: 0x001122, emissiveIntensity: 0.25
@@ -747,21 +786,20 @@ def generate_terminal_3d_html(
     terminalGroup.add(mainPipe);
 
     // Tank inlet extension (follows supply line z)
-    const tankLeadInCurve = new THREE.CatmullRomCurve3([
+    const tankLeadInCurve = buildRoundedPath([
       new THREE.Vector3(220, 8, MAIN_Z),
       new THREE.Vector3(260, 18, MAIN_Z),
       new THREE.Vector3(285, 48, MAIN_Z),
       new THREE.Vector3(300, 52, MAIN_Z)
-    ]);
+    ], 3.0);
     const tankLeadIn = new THREE.Mesh(new THREE.TubeGeometry(tankLeadInCurve, 30, mainRadius, 16, false), mainPipeMat);
     tankLeadIn.castShadow = true;
     terminalGroup.add(tankLeadIn);
 
     // Return / recirculation line: true parallel offset of the supply route.
-    const parallelOffset = -Math.max(7.0, mainRadius + retRadius + 3.0);
     const returnPts = offsetPolyline(mainPts, parallelOffset);
-    const recircCurve = new THREE.CatmullRomCurve3(returnPts, false, 'catmullrom', 0.15);
-    const recircPipeGeo = new THREE.TubeGeometry(recircCurve, 160, retRadius, 14, false);
+    const recircCurve = buildRoundedPath(returnPts, Math.max(2.0, retRadius * 2.5));
+    const recircPipeGeo = new THREE.TubeGeometry(recircCurve, 240, retRadius, 14, false);
     const recircPipeMat = new THREE.MeshStandardMaterial({{
       map: tempTexRet, color: 0x9be9a8, roughness: 0.3, metalness: 0.6,
       emissive: 0x002200, emissiveIntensity: 0.25
@@ -773,11 +811,11 @@ def generate_terminal_3d_html(
 
     // Connect pump P-201 to the actual return-route end (parallel offset).
     const returnEndZ = returnPts[returnPts.length - 1].z;
-    const pumpConnectCurve = new THREE.CatmullRomCurve3([
+    const pumpConnectCurve = buildRoundedPath([
       new THREE.Vector3(230, 4, -18),
       new THREE.Vector3(230, 8, returnEndZ - 4),
       new THREE.Vector3(220, 8, returnEndZ)
-    ]);
+    ], 2.0);
     const pumpConnect = new THREE.Mesh(new THREE.TubeGeometry(pumpConnectCurve, 16, retRadius, 12, false), recircPipeMat);
     terminalGroup.add(pumpConnect);
 
@@ -796,19 +834,6 @@ def generate_terminal_3d_html(
       }}
       telemetry.min_centerline_clearance = Number(minDist.toFixed(2));
     }})();
-
-    // Long-radius elbow collars at the omega-loop corners (supply and parallel return)
-    const elbowMat = new THREE.MeshStandardMaterial({{ color: 0xaab4c0, roughness: 0.35, metalness: 0.7 }});
-    const addElbow = (p) => {{
-      const elbow = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.3, 8, 20), elbowMat);
-      elbow.position.set(p.x, p.y, p.z);
-      elbow.rotation.x = Math.PI / 2;
-      terminalGroup.add(elbow);
-    }};
-    [2, 3, 4, 5, 7, 8, 9, 10].forEach(i => {{
-      addElbow(mainPts[i]);
-      addElbow(returnPts[i]);
-    }});
 
     // Click-to-inspect fluid state at any point on the supply/return pipe
     const raycaster = new THREE.Raycaster();
@@ -850,8 +875,7 @@ def generate_terminal_3d_html(
       skid.position.set(x, 0, z);
       terminalGroup.add(skid);
     }}
-    createTRVSkid(0, 32);
-    createTRVSkid(100, 32);
+    omegaCenters.forEach(cx => createTRVSkid(cx, MAIN_Z + LOOP_EXT + 2));
 
     // 7. Animated Flow Particles
     const PARTICLE_COUNT = 80;
@@ -879,7 +903,7 @@ def generate_terminal_3d_html(
     const views = {{
       overview: {{ cam: new THREE.Vector3(-180, 110, 240), tgt: new THREE.Vector3(60, 10, 0) }},
       lup: {{ cam: new THREE.Vector3(-150, 40, 70), tgt: new THREE.Vector3(-120, 15, 0) }},
-      omega: {{ cam: new THREE.Vector3(45, 120, 120), tgt: new THREE.Vector3(45, 12, 0) }},
+      omega: {{ cam: new THREE.Vector3(44, 130, 130), tgt: new THREE.Vector3(44, 12, 11) }},
       tank: {{ cam: new THREE.Vector3(240, 70, 160), tgt: new THREE.Vector3(300, 30, 0) }}
     }};
 

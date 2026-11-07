@@ -5,7 +5,7 @@ from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults
 
 
-def generate_schematic_2d_html(results, height_px: int = 620) -> str:
+def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | None = None, anchor_dist_m: float = 180.0) -> str:
     """Generates an interactive SVG/HTML P&ID schematic of the Jetty-to-Tank circuit."""
 
     if isinstance(results, Simulation3DResults):
@@ -29,11 +29,54 @@ def generate_schematic_2d_html(results, height_px: int = 620) -> str:
     inlet_p_bar = p_in
     m_flow = cfg.mass_flow_rate_kg_s
 
-    # Dynamic mid-point estimates for Omega loops
-    t_omega1 = t_in + (t_out - t_in) * 0.35
-    p_omega1 = p_in - (p_in - p_out) * 0.35
-    t_omega2 = t_in + (t_out - t_in) * 0.70
-    p_omega2 = p_in - (p_in - p_out) * 0.70
+    # Dynamic omega count and layout, synchronized with the 3D view.
+    route_length = length_m if length_m else cfg.length_m
+    omega_count = max(1, min(8, int(round(route_length / max(anchor_dist_m, 50.0)))))
+    omega_span_start, omega_span_end = 300.0, 760.0
+    slot = (omega_span_end - omega_span_start) / omega_count
+    omega_w = min(50.0, slot * 0.78)
+    main_path_parts = ["M 140 270", "L 200 270"]
+    omega_groups = []
+    apd_groups = []
+    omega_labels = []
+    for k in range(omega_count):
+        x0 = omega_span_start + slot * k + (slot - omega_w) / 2.0
+        x1 = x0 + omega_w
+        cx = (x0 + x1) / 2.0
+        frac = (k + 1) / (omega_count + 1)
+        t_om = t_in + (t_out - t_in) * frac
+        p_om = p_in - (p_in - p_out) * frac
+        main_path_parts.extend([
+            f"L {x0:.1f} 270", f"L {x0:.1f} 180",
+            f"L {x1:.1f} 180", f"L {x1:.1f} 270",
+        ])
+        omega_groups.append(f"""
+      <g class="node-group" onclick="showInfo('Omega-{k+1} Dolfeni (Expansion Loop)', 'Kriyojenik büzülmeyi sönümleyen {k+1}. Omega genleşme döngüsü. Hat soğuduğunda esneyerek gerilimi azaltır.', '{t_om:.1f} °C', '{p_om:.2f} bar', 'Ω-Loop {k+1}')">
+        <rect x="{x0-10:.1f}" y="160" width="{omega_w+20:.1f}" height="180" fill="#161b22" stroke="#d29922" stroke-width="1.5" stroke-dasharray="4,2" rx="4" />
+        <circle cx="{cx:.1f}" cy="172" r="5" fill="#da3633" />
+        <text x="{x0-5:.1f}" y="152" fill="#d29922" font-size="10" font-weight="700">OMEGA-{k+1} DOLFENİ</text>
+        <text x="{cx-10:.1f}" y="352" fill="#8b949e" font-size="9" font-weight="600">Ω-Loop {k+1}</text>
+      </g>""")
+        omega_labels.append((cx, t_om, p_om))
+    for k in range(omega_count + 1):
+        ax = omega_span_start + slot * k
+        apd_groups.append(f"""
+      <g class="node-group" onclick="showInfo('APD-{k+1} Dolfeni', 'Yaklaşım köprüsü taşıyıcı dolfeni. Kriyojenik boru köprüsünü taşır.', '{t_in + 0.3:.1f} °C', '{p_in - 0.1:.2f} bar', 'Kazık Çapı: 1200 mm')">
+        <rect x="{ax-15:.1f}" y="250" width="30" height="85" fill="#21262d" stroke="#8b949e" stroke-width="1.5" rx="3" />
+        <circle cx="{ax:.1f}" cy="310" r="4" fill="#30363d" />
+        <text x="{ax-22:.1f}" y="352" fill="#8b949e" font-size="9" font-weight="600">APD-{k+1}</text>
+      </g>""")
+    main_path_parts.append("L 955 270")
+    main_path_d = " ".join(main_path_parts)
+    omega_and_apd_html = "".join(omega_groups) + "".join(apd_groups)
+    if omega_labels:
+        fx, ft, fp = omega_labels[0]
+        omega_label_html = (
+            f'<rect x="{fx-45:.1f}" y="240" width="95" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#d29922" />\n'
+            f'      <text x="{fx-40:.1f}" y="253" fill="#d29922" font-size="9" font-weight="700">Ω-1: {fp:.1f}b | {ft:.1f}°</text>'
+        )
+    else:
+        omega_label_html = ""
 
     html = f"""
 <!DOCTYPE html>
@@ -156,6 +199,7 @@ def generate_schematic_2d_html(results, height_px: int = 620) -> str:
         <span class="legend-badge"><div class="legend-line" style="background:#1f6feb;"></div>LNG Tahliye Hattı (Ana Hat)</span>
         <span class="legend-badge"><div class="legend-line" style="background:#39d353;"></div>Sirkülasyon & Soğutma Hattı</span>
         <span class="legend-badge"><div class="legend-line" style="background:#d29922; stroke-dasharray: 3,2;"></div>BOG Buhar Dönüş Hattı</span>
+        <span class="legend-badge" style="color:#d29922; font-weight:700;">Hat: {route_length:.0f} m | Ω: {omega_count}</span>
       </div>
     </div>
 
@@ -217,42 +261,8 @@ def generate_schematic_2d_html(results, height_px: int = 620) -> str:
         <text x="166" y="325" fill="#8b949e" font-size="9">ESDV-101 / MLA</text>
       </g>
 
-      <!-- ================= 3. APD DOLFENLERİ (APPROACH PILES) ================= -->
-      <!-- APD-1 -->
-      <g class="node-group" onclick="showInfo('APD-1 Dolfeni', 'Yaklaşım köprüsü taşıyıcı dolfeni. Kriyojenik boru köprüsünü ve kablo tavasını taşır.', '{t_in + 0.3:.1f} °C', '{p_in - 0.1:.2f} bar', 'Kazık Çapı: 1200 mm')">
-        <rect x="290" y="250" width="30" height="85" fill="#21262d" stroke="#8b949e" stroke-width="1.5" rx="3" />
-        <circle cx="305" cy="310" r="4" fill="#30363d" />
-        <text x="282" y="352" fill="#8b949e" font-size="9" font-weight="600">APD-1</text>
-      </g>
-
-      <!-- ================= 4. OMEGA-1 GENLEŞME DÖNGÜSÜ DOLFENİ ================= -->
-      <g class="node-group" onclick="showInfo('Omega-1 Dolfeni (Expansion Loop)', 'Kriyojenik büzülmeyi (~3 mm/m) sönümleyen Omega genleşme döngüsü. Hat soğuduğunda yaklaşık 80-120 mm esner. Tepe noktasında TRV-101 ısıl tahliye vanası bulunur.', '{t_omega1:.1f} °C', '{p_omega1:.2f} bar', 'Genleşme: ~100 mm')">
-        <rect x="370" y="160" width="70" height="180" fill="#161b22" stroke="#d29922" stroke-width="1.5" stroke-dasharray="4,2" rx="4" />
-        <!-- TRV Valve on Loop Top -->
-        <circle cx="405" cy="172" r="5" fill="#da3633" />
-        <text x="375" y="152" fill="#d29922" font-size="10" font-weight="700">OMEGA-1 DOLFENİ</text>
-        <text x="390" y="352" fill="#8b949e" font-size="9" font-weight="600">Ω-Loop 1</text>
-      </g>
-
-      <!-- APD-2 -->
-      <g class="node-group" onclick="showInfo('APD-2 Dolfeni', 'İkinci yaklaşım dolfeni. Hat kılavuz kayar mesnetlerini (pipe guides) barındırır.', '{t_omega1 + 0.3:.1f} °C', '{p_omega1 - 0.1:.2f} bar', 'Kayar Mesnet')">
-        <rect x="490" y="250" width="30" height="85" fill="#21262d" stroke="#8b949e" stroke-width="1.5" rx="3" />
-        <text x="482" y="352" fill="#8b949e" font-size="9" font-weight="600">APD-2</text>
-      </g>
-
-      <!-- ================= 5. OMEGA-2 GENLEŞME DÖNGÜSÜ DOLFENİ ================= -->
-      <g class="node-group" onclick="showInfo('Omega-2 Dolfeni (Expansion Loop)', 'İkinci genleşme döngüsü dolfeni. Karaya yaklaşırken borunun aşırı gerilmesini ve flanş kaçaklarını önler. TRV-102 emniyet ventili mevcuttur.', '{t_omega2:.1f} °C', '{p_omega2:.2f} bar', 'Genleşme: ~110 mm')">
-        <rect x="570" y="160" width="70" height="180" fill="#161b22" stroke="#d29922" stroke-width="1.5" stroke-dasharray="4,2" rx="4" />
-        <circle cx="605" cy="172" r="5" fill="#da3633" />
-        <text x="575" y="152" fill="#d29922" font-size="10" font-weight="700">OMEGA-2 DOLFENİ</text>
-        <text x="590" y="352" fill="#8b949e" font-size="9" font-weight="600">Ω-Loop 2</text>
-      </g>
-
-      <!-- APD-3 -->
-      <g class="node-group" onclick="showInfo('APD-3 Dolfeni', 'Kara geçişi öncesi son açık deniz dolfeni. Sabit ankraj mesnedini (anchor) taşır.', '{t_omega2 + 0.3:.1f} °C', '{p_omega2 - 0.1:.2f} bar', 'Sabit Ankraj')">
-        <rect x="690" y="250" width="30" height="85" fill="#21262d" stroke="#8b949e" stroke-width="1.5" rx="3" />
-        <text x="682" y="352" fill="#8b949e" font-size="9" font-weight="600">APD-3</text>
-      </g>
+      <!-- ================= 3-5. DİNAMİK APD VE OMEGA DOLFENLERİ ================= -->
+      {omega_and_apd_html}
 
       <!-- Shore Isolation Valve Station (ESDV-201) -->
       <g class="node-group" onclick="showInfo('Kara Sınırı İzolasyon İstasyonu', 'Deniz ile karayı ayıran acil durum kapatma vanası (ESDV-201) ve izolasyon flanşı.', '{t_out - 0.2:.1f} °C', '{p_out + 0.1:.2f} bar', 'ESDV-201')">
@@ -287,19 +297,7 @@ def generate_schematic_2d_html(results, height_px: int = 620) -> str:
 
       <!-- ================= PIPING RUNS ================= -->
       <!-- 1. MAIN UNLOADING LINE (GEMİ -> LUP -> OMEGA 1 -> OMEGA 2 -> TANK) -->
-      <path class="flow-line" d="
-        M 140 270 
-        L 200 270
-        L 380 270
-        L 380 180
-        L 430 180
-        L 430 270
-        L 580 270
-        L 580 180
-        L 630 180
-        L 630 270
-        L 955 270
-      " fill="none" stroke="#1f6feb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" />
+      <path class="flow-line" d="{main_path_d}" fill="none" stroke="#1f6feb" stroke-width="5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrow)" />
 
       <!-- 2. COOLDOWN RECIRCULATION RETURN LINE (TANK -> PUMP -> LUP -> SHIP) -->
       <path class="recirc-line" d="
@@ -325,8 +323,7 @@ def generate_schematic_2d_html(results, height_px: int = 620) -> str:
       <rect x="220" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#58a6ff" />
       <text x="225" y="253" fill="#58a6ff" font-size="9" font-weight="700">GİRİŞ: {inlet_p_bar:.1f}b | {inlet_t_c:.1f}°</text>
 
-      <rect x="440" y="240" width="95" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#d29922" />
-      <text x="445" y="253" fill="#d29922" font-size="9" font-weight="700">Ω-1: {p_omega1:.1f}b | {t_omega1:.1f}°</text>
+      {omega_label_html}
 
       <rect x="850" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#3fb950" />
       <text x="855" y="253" fill="#3fb950" font-size="9" font-weight="700">ÇIKIŞ: {p_out:.1f}b | {t_out:.1f}°</text>
