@@ -217,7 +217,7 @@ if st.session_state.get("_last_preset") != selected_preset_name:
 preset_token = st.session_state.get("_preset_token", 0)
 
 
-def unit_input(label, category, key, default_si, min_si=None, max_si=None, step_si=None, help=None):
+def unit_input(label, category, key, default_si, min_si=None, max_si=None, step_si=None):
     """Number input with an adjacent unit dropdown; stores the SI value in session_state."""
     c_val, c_unit = st.columns([3, 1])
     unit_options = units_for(category)
@@ -242,7 +242,6 @@ def unit_input(label, category, key, default_si, min_si=None, max_si=None, step_
             label,
             value=round(from_si(category, si_prev, unit), 6),
             key=f"num_{key}_{unit}_{preset_token}",
-            help=help,
             **kwargs,
         )
     si_new = to_si(category, disp, unit)
@@ -262,6 +261,7 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
         ["ASME Tablosu", "Manuel Giriş"],
         index=0 if preset is None else 1,
         horizontal=True,
+        key=f"geom_{preset_token}",
     )
     if geom_mode == "ASME Tablosu":
         geom_group = st.selectbox("Boru Standardı", list(PIPE_TABLE_GROUPS.keys()), index=1)
@@ -288,7 +288,7 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
             min_si=1.5, max_si=60.0, step_si=0.5,
         )
 
-    inclination_deg = st.number_input("Hat Eğim Açısı θ (°)", min_value=-90.0, max_value=90.0, value=preset["incline"] if preset else 0.0, step=1.0, help="Pozitif = Yokuş yukarı (hidrostatik basınç kaybı ekler)")
+    inclination_deg = st.number_input("Hat Eğim Açısı θ (°)", min_value=-90.0, max_value=90.0, value=preset["incline"] if preset else 0.0, step=1.0, key=f"incl_{preset_token}", help="Pozitif = Yokuş yukarı (hidrostatik basınç kaybı ekler)")
     pipe_mat_name = st.selectbox("Boru Malzemesi (ısıl iletkenlik)", list(PIPE_MATERIALS.keys()))
     roughness_um = st.number_input("Boru İç Pürüzlülüğü ε (µm)", min_value=1.0, max_value=500.0, value=45.0, step=5.0)
 
@@ -701,7 +701,7 @@ with c3:
     """, unsafe_allow_html=True)
 
 with c4:
-    margin_class = "delta-safe" if min_margin_d >= 0.5 else "delta-up"
+    margin_class = "delta-safe" if min_margin_pa >= 0.5e5 else "delta-up"
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Min. Kavitasyon Marjı</div>

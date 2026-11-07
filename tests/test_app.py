@@ -28,3 +28,31 @@ def test_critical_low_pressure_preset_runs_without_exception():
     at.sidebar.selectbox[0].set_value("Kritik Düşük Basınç Testi (Çeperde Kaynama Başlangıcı)")
     at.run()
     assert not at.exception, at.exception[0].value if at.exception else "unknown error"
+
+
+def _inputs(at):
+    return {n.label: n.value for n in at.sidebar.number_input}
+
+
+def test_preset_applies_geometry_and_manual_mode():
+    at = _run_app()
+    at.sidebar.selectbox[0].set_value("Marine Jetty Yükleme Hattı (DN250, 500m, 5 bar)")
+    at.run()
+    assert not at.exception, at.exception[0].value if at.exception else "unknown error"
+    assert at.sidebar.radio[1].value == "Manuel Giriş"
+    values = _inputs(at)
+    assert values["Boru Uzunluğu L"] == 500.0
+    assert values["Boru İç Çapı ID"] == 250.0
+    assert values["Boru Et Kalınlığı"] == 6.35
+    assert values["Hat Eğim Açısı θ (°)"] == 0.0
+
+
+def test_unit_switch_converts_input_and_output():
+    at = _run_app()
+    for s in at.sidebar.selectbox:
+        if s.label == "Giriş Sıcaklığı T_in birimi":
+            s.set_value("°F")
+    at.run()
+    assert not at.exception, at.exception[0].value if at.exception else "unknown error"
+    assert abs(_inputs(at)["Giriş Sıcaklığı T_in"] - (-258.7)) < 0.2
+    assert any("°F" in m.value for m in at.markdown if "metric-value" in m.value)

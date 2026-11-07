@@ -645,12 +645,12 @@ def generate_terminal_3d_html(
 
     terminalGroup.add(tankGroup);
 
-    // 6. PIPELINES: Supply at z=+3.5, return at z=-3.5; omega loops mirror so they never cross.
+    // 6. PIPELINES: supply route plus a true parallel-offset return route.
     const MAIN_Z = 3.5;
     const RET_Z = -3.5;
     const LOOP_EXT = 22.0;
-    const mainRadius = Math.max(0.6, telemetry.diameter_mm / 210.0);
-    const retRadius = Math.max(0.4, telemetry.return_id_mm / 210.0);
+    const mainRadius = Math.min(3.0, Math.max(0.6, telemetry.diameter_mm / 210.0));
+    const retRadius = Math.min(1.8, Math.max(0.4, telemetry.return_id_mm / 210.0));
 
     // Temperature-driven 1D gradient texture (TubeGeometry uv.x runs along length).
     function buildTempGradient(stationData, reverse) {{
@@ -771,11 +771,12 @@ def generate_terminal_3d_html(
     recircPipe.userData.lineType = "return";
     terminalGroup.add(recircPipe);
 
-    // Connect pump P-201 to the return line
+    // Connect pump P-201 to the actual return-route end (parallel offset).
+    const returnEndZ = returnPts[returnPts.length - 1].z;
     const pumpConnectCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(230, 4, -18),
-      new THREE.Vector3(230, 8, RET_Z - 4),
-      new THREE.Vector3(220, 8, RET_Z)
+      new THREE.Vector3(230, 8, returnEndZ - 4),
+      new THREE.Vector3(220, 8, returnEndZ)
     ]);
     const pumpConnect = new THREE.Mesh(new THREE.TubeGeometry(pumpConnectCurve, 16, retRadius, 12, false), recircPipeMat);
     terminalGroup.add(pumpConnect);
