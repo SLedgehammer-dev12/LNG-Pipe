@@ -19,10 +19,10 @@ from components.pipeline_schematic_2d import generate_schematic_2d_html
 from components.terminal_3d_viewer import generate_terminal_3d_html
 from core.terminal_ops import evaluate_terminal_operations
 from core.mechanics import (
-    PipelineSpecification,
     calculate_asme_b31_3_thickness,
     calculate_thermal_contraction_and_omega_loop,
     calculate_joukowsky_surge,
+    spec_from_material,
 )
 from core.pipe_schedule import PIPE_TABLE_GROUPS, inner_diameter_mm
 from core.units import DEFAULT_UNITS, units_for, to_si, from_si, delta_from_si
@@ -743,12 +743,13 @@ terminal_ops = evaluate_terminal_operations(
 )
 
 d_outer_m = (diameter_mm + 2.0 * wall_thickness_mm) / 1000.0
-pipe_spec = PipelineSpecification(
+pipe_spec = spec_from_material(
+    pipe_mat_name,
     outer_diameter_m=d_outer_m,
     design_pressure_pa=design_p_bar * 1e5,
     operating_pressure_pa=inlet_p_bar * 1e5,
     pipeline_length_m=length_m,
-    fluid_density_kg_m3=rho_avg
+    fluid_density_kg_m3=rho_avg,
 )
 asme_mech = calculate_asme_b31_3_thickness(pipe_spec)
 v_nom = mass_flow_kg_s / (rho_avg * (np.pi * (diameter_mm / 2000.0) ** 2))
@@ -761,16 +762,19 @@ with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik D
     p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, p_unit)
     surge_d = _p_show(surge_mech["actual_surge_bar"] * 1e5, p_unit)
     peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, p_unit)
+    surge_limit_d = _p_show(design_p_bar * 1e5 * 1.33, p_unit)
     with col_t1:
         st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{_m_show(bog_kg_s, flow_unit):.2f} {u_f}</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
     with col_t2:
         st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} m)</span>", unsafe_allow_html=True)
     with col_t3:
-        t_ok = wall_thickness_mm >= asme_mech["t_required_min_mm"]
+        # B6: mill undertolerance — worst-case actual thickness (0.875*t_nom) must meet t_required
+        t_ok = (wall_thickness_mm * (1.0 - pipe_spec.mill_tolerance)) >= asme_mech["t_required_min_mm"]
         st.markdown(f"**ASME B31.3 Et Kalınlığı:**<br/><span style='color:{'#3fb950' if t_ok else '#f85149'}; font-size:16px; font-weight:700;'>t_req = {asme_mech['t_required_min_mm']:.2f} mm</span><br/><span style='color:#8b949e; font-size:12px;'>Mevcut: {wall_thickness_mm:.1f} mm ({'✓ UYGUN' if t_ok else '⚠️ YETERSİZ'}) | P_test: {p_test_d:.2f} {u_p}</span>", unsafe_allow_html=True)
     with col_t4:
-        surge_safe = surge_mech["actual_surge_bar"] < 5.0
-        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#d29922'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_p}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
+        # B7: surge acceptance vs design pressure (1.33x occasional overpressure allowance), not hard-coded 5 bar
+        surge_safe = surge_mech["peak_line_pressure_bar"] <= design_p_bar * 1.33
+        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_p}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
 
 # --- VIEW TABS ---
 tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([

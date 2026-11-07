@@ -38,16 +38,35 @@ class FluidManager:
             return "Methane"
         
         # Build CoolProp mixture string e.g. HEOS::Methane[0.94]&Ethane[0.04]...
+        total = sum(self.composition.values())
+        if total <= 0.0:
+            raise ValueError("Kompozisyon toplamı sıfır veya negatif; en az bir componente mol oranı gereklidir.")
         components = []
         fractions = []
-        total = sum(self.composition.values())
         for comp, frac in self.composition.items():
             norm_frac = frac / total
+            if norm_frac < 0.0:
+                raise ValueError(f"Kompozisyon negatif olamaz: {comp}={frac}")
             components.append(comp)
             fractions.append(norm_frac)
 
         comp_str = "&".join(f"{comp}[{frac:.4f}]" for comp, frac in zip(components, fractions))
         return f"HEOS::{comp_str}"
+
+    def composition_sum(self) -> float:
+        """Returns the sum of composition mole fractions (should be ~100 for % inputs, ~1.0 for fractions)."""
+        return sum(self.composition.values())
+
+    def get_npsh_margin_a(self, T: float, P: float) -> float:
+        """
+        Net Positive Suction Head available (m of liquid) at (T, P).
+        NPSH_a = (P_abs - P_sat(T)) / (rho * g). Mirrors the flashing margin
+        expressed in head units; negative values indicate cavitation/flashing risk.
+        """
+        props = self.get_properties(T, P)
+        p_sat = props.vapor_pressure
+        rho = max(props.density, 1e-3)
+        return (P - p_sat) / (rho * 9.80665)
 
     def get_vapor_pressure(self, T: float) -> float:
         """Calculate saturation vapor pressure Psat(T) in Pa."""
@@ -89,8 +108,10 @@ class FluidManager:
         if cache_key in self._cache:
             return self._cache[cache_key]
 
-        T_val = max(91.0, min(T, 350.0))
-        P_val = max(50000.0, P)
+        # Clamp to physically valid methane range for EOS evaluation
+        # Methane triple point ~90.7 K / 11.7 kPa; critical point ~190.6 K / 4.6 MPa
+        T_val = max(90.7, min(T, 190.6))
+        P_val = max(5000.0, P)  # above triple-point pressure; small epsilon for division safety
 
         backend = self._backend_string
         try:
@@ -99,6 +120,9 @@ class FluidManager:
             mu = float(CP.PropsSI("V", "T", T_val, "P", P_val, backend))
             k = float(CP.PropsSI("L", "T", T_val, "P", P_val, backend))
             h = float(CP.PropsSI("H", "T", T_val, "P", P_val, backend))
+            # Validate CoolProp output is finite; fall back if NaN/inf
+            if not all(math.isfinite(v) for v in (rho, cp, mu, k, h)):
+                raise ValueError("CoolProp returned non-finite value")
         except Exception:
             # Fallback to pure methane if mixture flash struggles
             try:
@@ -129,11 +153,11 @@ class FluidManager:
         props = FluidProperties(
             temperature=T,
             pressure=P,
-            density=max(rho, 300.0),
-            specific_heat=max(cp, 2000.0),
-            viscosity=max(mu, 1e-5),
-            thermal_conductivity=max(k, 0.05),
-            vapor_pressure=max(p_sat, 1000.0),
+            density=max(rho, 1e-3),
+            specific_heat=max(cp, 100.0),
+            viscosity=max(mu, 1e-7),
+            thermal_conductivity=max(k, 1e-4),
+            vapor_pressure=max(p_sat, 100.0),
             enthalpy=h
         )
         self._cache[cache_key] = props

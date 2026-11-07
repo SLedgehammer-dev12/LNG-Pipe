@@ -86,6 +86,9 @@ class PipelineSolver:
         sin_theta = math.sin(math.radians(cfg.inclination_deg))
         g = 9.80665
 
+        # Triple-point pressure floor for methane (~11.7 kPa); below this the EOS is invalid.
+        P_TRIPLE_PA = 11696.0
+
         # Initial state at inlet
         curr_t = cfg.inlet_temperature_k
         curr_p = cfg.inlet_pressure_pa
@@ -98,8 +101,10 @@ class PipelineSolver:
             props = self.fm.get_properties(curr_t, curr_p)
             q_prime, radial_temps = self.thermal_model.calculate_heat_ingress(props, cfg.mass_flow_rate_kg_s)
 
-            velocity = cfg.mass_flow_rate_kg_s / (props.density * flow_area)
-            reynolds = (props.density * velocity * cfg.inner_diameter_m) / props.viscosity
+            # Enthalpy state: h (J/kg). Initialized from CoolProp; updated by heat ingress.
+            if i == 0:
+                curr_h = props.enthalpy
+
             p_sat = props.vapor_pressure
             margin = curr_p - p_sat
 
@@ -109,29 +114,42 @@ class PipelineSolver:
             results.vapor_pressure_pa.append(p_sat)
             results.flashing_margin_pa.append(margin)
             results.heat_ingress_w_m.append(q_prime)
-            results.velocity_m_s.append(velocity)
-            results.density_kg_m3.append(props.density)
-            results.reynolds.append(reynolds)
             results.radial_temperatures.append(radial_temps)
 
+            alpha = 0.0
+            phi_l_sq = 1.0
+            flow_density = props.density
             if margin <= 0.0:
+                # Two-phase flashing regime: pin T to Tsat(P), compute quality from enthalpy.
                 h_fg = self.fm.get_latent_heat(curr_p)
                 t_sat, _ = self.fm.get_bubble_dew_temperature(curr_p)
-                delta_t_superheat = max(0.0, curr_t - t_sat)
-                vapor_quality = min(0.99, (props.specific_heat * delta_t_superheat) / max(h_fg, 1e4))
-                # Saturated vapor properties for Lockhart-Martinelli (M_methane = 0.01604 kg/mol)
-                rho_v = max(0.1, 0.01604 * curr_p / (8.314 * max(curr_t, 100.0)))
-                alpha, phi_l_sq, _ = calculate_two_phase_flashing(
+                curr_t = t_sat  # mixture temperature pinned to saturation at local pressure
+                h_liq = self.fm.get_properties(t_sat, curr_p).enthalpy
+                h_vap = self.fm.get_properties(t_sat, curr_p + 100.0).enthalpy  # approximate sat-vapor via property call
+                h_fg = max(h_vap - h_liq, 1e4)
+                # Quality from cumulative enthalpy relative to saturated liquid at local P
+                vapor_quality = min(0.99, max(0.0, (curr_h - h_liq) / h_fg))
+                # Saturated vapor density via ideal-gas estimate for Lockhart-Martinelli
+                rho_v = max(0.05, 0.01604 * curr_p / (8.314 * max(curr_t, 90.7)))
+                alpha, phi_l_sq, two_phase_rho = calculate_two_phase_flashing(
                     vapor_quality=vapor_quality,
                     liquid_density=props.density,
                     vapor_density=rho_v,
                     liquid_viscosity=props.viscosity,
                     vapor_viscosity=8.0e-6
                 )
+                # Use homogeneous two-phase density for velocity / hydrostatics when flashing
+                flow_density = two_phase_rho
             else:
                 alpha = 0.0
                 phi_l_sq = 1.0
 
+            results.density_kg_m3.append(flow_density)
+            # Velocity / Reynolds based on the effective (possibly two-phase) density
+            velocity = cfg.mass_flow_rate_kg_s / (flow_density * flow_area)
+            reynolds = (flow_density * velocity * cfg.inner_diameter_m) / props.viscosity
+            results.velocity_m_s.append(velocity)
+            results.reynolds.append(reynolds)
             results.void_fraction.append(alpha)
             results.two_phase_multiplier.append(phi_l_sq)
 
@@ -141,19 +159,30 @@ class PipelineSolver:
 
             # Marching step for i < num_cells
             if i < cfg.num_cells:
-                # 1. Hydraulic drop (friction + two-phase multiplier + hydrostatic elevation)
+                # 1. Hydraulic drop (friction * two-phase multiplier + hydrostatic elevation)
                 f = calculate_churchill_friction_factor(reynolds, rel_roughness)
-                dp_friction = f * (dx / cfg.inner_diameter_m) * (0.5 * props.density * (velocity ** 2)) * phi_l_sq
-                dp_hydrostatic = props.density * g * sin_theta * dx
-                dp_total = dp_friction + dp_hydrostatic
+                dp_friction = f * (dx / cfg.inner_diameter_m) * (0.5 * flow_density * (velocity ** 2)) * phi_l_sq
+                dp_hydrostatic = flow_density * g * sin_theta * dx
+                # Two-phase acceleration / momentum pressure-drop term (dG/dx)
+                dp_accel = 0.0
+                if alpha > 1e-5 and len(results.density_kg_m3) >= 2:
+                    mass_flux = cfg.mass_flow_rate_kg_s / flow_area
+                    dp_accel = mass_flux ** 2 * (1.0 / max(results.density_kg_m3[-1], 1e-3) - 1.0 / max(results.density_kg_m3[-2], 1e-3))
+                dp_total = dp_friction + dp_hydrostatic + dp_accel
 
-                # 2. Thermal energy rise (dT = q' * dx / (m * cp))
-                dt = (q_prime * dx) / (cfg.mass_flow_rate_kg_s * props.specific_heat)
+                # 2. Thermal energy rise as enthalpy (dH = q' * dx / m); absorbs latent heat on flashing
+                dh = (q_prime * dx) / cfg.mass_flow_rate_kg_s
+                curr_h += dh
                 total_heat_ingress += q_prime * dx
 
-                # Update next cell states
-                curr_p = max(1000.0, curr_p - dp_total)
-                curr_t = curr_t + dt
+                # Convert enthalpy back to temperature: pinned at Tsat(P) while flashing
+                if margin <= 0.0:
+                    curr_t = max(90.7, self.fm.get_bubble_dew_temperature(curr_p)[0])
+                else:
+                    curr_t = curr_t + dh / max(props.specific_heat, 100.0)
+
+                # Update next cell pressure; stop at methane triple point instead of 1 kPa floor
+                curr_p = max(P_TRIPLE_PA, curr_p - dp_total)
 
         # Final summaries
         results.outlet_temperature_k = results.temperature_k[-1]

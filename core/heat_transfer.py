@@ -130,3 +130,26 @@ class PipeThermalModel:
         }
 
         return heat_ingress_w_m, temperatures
+
+
+def check_radial_consistency(
+    t_wall_1d: float,
+    t_wall_3d: float,
+    label: str = "station",
+) -> dict:
+    """
+    Compares the 1D radial-network inner-wall temperature with a 3D wall
+    temperature at the same axial station. Returns absolute/relative delta
+    and a consistency flag. Useful as a runtime diagnostic (B9).
+    """
+    delta_k = abs(t_wall_1d - t_wall_3d)
+    rel_delta = delta_k / max(abs(t_wall_1d), 1.0)
+    consistent = rel_delta <= 0.05  # 5 % tolerance
+    return {
+        "label": label,
+        "t_wall_1d_k": t_wall_1d,
+        "t_wall_3d_k": t_wall_3d,
+        "delta_k": round(delta_k, 3),
+        "relative_delta": round(rel_delta, 4),
+        "consistent": consistent,
+    }

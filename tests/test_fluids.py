@@ -42,3 +42,38 @@ def test_lng_mixture_properties():
     assert 420.0 < props.density < 470.0
     assert props.vapor_pressure > 0.0
     assert props.specific_heat > 2500.0
+
+
+def test_b1_gas_density_not_floored_at_300():
+    # B1: low-pressure gas region must NOT be clamped to 300 kg/m³
+    fm = FluidManager(fluid_type="pure_methane")
+    props = fm.get_properties(130.0, 60000.0)  # ~130 K / 0.6 bar -> gaseous methane
+    assert props.density < 50.0, f"gas density wrongly floored: {props.density}"
+    assert props.viscosity < 1e-4
+    assert props.thermal_conductivity < 0.05
+
+
+def test_b3_non_finite_coolprop_falls_back():
+    # B3: non-finite CoolProp output must fall back cleanly (no crash, finite props)
+    fm = FluidManager(fluid_type="pure_methane")
+    props = fm.get_properties(111.66, 101325.0)
+    assert all(
+        __import__("math").isfinite(v)
+        for v in (props.density, props.specific_heat, props.viscosity, props.thermal_conductivity, props.enthalpy)
+    )
+
+
+def test_b10_npsh_margin_positive_in_liquid():
+    # B10: NPSH available positive for subcooled liquid, negative when flashing
+    fm = FluidManager(fluid_type="pure_methane")
+    npsh_liq = fm.get_npsh_margin_a(111.66, 200000.0)  # 2 bar, well above Psat
+    assert npsh_liq > 0.0
+    npsh_flash = fm.get_npsh_margin_a(111.66, 50000.0)  # below Psat -> flashing
+    assert npsh_flash < 0.0
+
+
+def test_b10_composition_guard_rejects_empty():
+    # B10: empty/zero-sum composition must raise, not silently produce nonsense
+    with pytest.raises(ValueError):
+        FluidManager(fluid_type="mixture", composition={"Methane": 0.0, "Ethane": 0.0})
+

@@ -115,3 +115,40 @@ def test_hydrostatic_elevation_head():
     delta_p_uphill = config_uphill.inlet_pressure_pa - res_uphill.outlet_pressure_pa
     
     assert delta_p_uphill > delta_p_flat + 180000.0
+
+
+def test_b2_two_phase_marching_stays_bounded_at_triple_point():
+    # B2: when flashing occurs, pressure must not collapse below methane triple point,
+    # void fraction must stay in [0,1], and temperature pinned at Tsat(P) (not rising on liquid cp).
+    fm = FluidManager(fluid_type="pure_methane")
+    layers = [InsulationLayer(name="Bare Thin Foam", thickness_m=0.003, thermal_conductivity=0.08)]
+    thermal_model = PipeThermalModel(
+        inner_diameter_m=0.08,
+        wall_thickness_m=0.004,
+        pipe_conductivity=15.0,
+        insulation_layers=layers,
+        ambient_temperature_k=300.0,
+        wind_speed_m_s=10.0,
+    )
+    config = PipelineSimulationConfig(
+        length_m=200.0,
+        inner_diameter_m=0.08,
+        roughness_m=4.5e-5,
+        inclination_deg=0.0,
+        inlet_temperature_k=111.5,
+        inlet_pressure_pa=60000.0,  # 0.6 bar, near flashing
+        mass_flow_rate_kg_s=3.0,
+        num_cells=80,
+    )
+    solver = PipelineSolver(fluid_manager=fm, thermal_model=thermal_model, config=config)
+    results = solver.solve()
+
+    # Pressure must never drop below methane triple point (~11.7 kPa)
+    assert min(results.pressure_pa) >= 11696.0 - 100.0
+    # Void fraction bounded
+    assert all(0.0 <= a <= 1.0 for a in results.void_fraction)
+    # If flashing occurred, outlet temperature should be pinned at/near saturation, not superheated on liquid cp
+    if results.has_flashed:
+        assert results.outlet_temperature_k < 115.0
+        assert max(results.void_fraction) > 0.0
+

@@ -424,15 +424,52 @@ def generate_terminal_3d_html(
     controls.target.set(SCENE_CX, 10, 0);
     controls.update();
 
-    // Sea Surface
+    // Sea Surface — calm animated waves with shore gradient
     const waterGeo = new THREE.PlaneGeometry(4200, 1600, 64, 64);
-    const waterMat = new THREE.MeshStandardMaterial({{
-      color: 0x061e38,
-      roughness: 0.15,
-      metalness: 0.85,
-      transparent: true,
-      opacity: 0.92,
-      flatShading: true
+    const waterCenterX = ROUTE_END * 0.5;
+    const shoreLocalX = SEAWALL_X - waterCenterX;
+    const waterMat = new THREE.ShaderMaterial({{
+      uniforms: {{
+        uTime: {{ value: 0.0 }},
+        uShoreX: {{ value: shoreLocalX }},
+        uDeepColor: {{ value: new THREE.Color(0x02101e) }},
+        uShoreColor: {{ value: new THREE.Color(0x1b4a6b) }},
+        uFoamColor: {{ value: new THREE.Color(0x9fd3e8) }}
+      }},
+      vertexShader: `
+        uniform float uTime;
+        uniform float uShoreX;
+        varying float vShoreDist;
+        varying vec3 vWorldPos;
+        void main(){{
+          vec3 pos = position;
+          // Calm long-wavelength swell
+          float wave = 0.14 * sin(pos.x * 0.018 + uTime * 1.1)
+                     + 0.10 * cos(pos.y * 0.025 - uTime * 0.8);
+          pos.z += wave; // local z -> world up after Rx(-90)
+          vec4 worldPos = modelMatrix * vec4(pos, 1.0);
+          vWorldPos = worldPos.xyz;
+          vShoreDist = uShoreX - position.x;
+          gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+        }}
+      `,
+      fragmentShader: `
+        uniform float uTime;
+        uniform vec3 uDeepColor;
+        uniform vec3 uShoreColor;
+        uniform vec3 uFoamColor;
+        varying float vShoreDist;
+        varying vec3 vWorldPos;
+        void main(){{
+          float shore = smoothstep(0.0, 70.0, vShoreDist);
+          vec3 color = mix(uShoreColor, uDeepColor, shore);
+          float waveFoam = smoothstep(0.0, 16.0, vShoreDist)
+                         * (0.45 + 0.45 * sin(uTime * 2.6 + vWorldPos.x * 0.08));
+          color = mix(color, uFoamColor, waveFoam);
+          gl_FragColor = vec4(color, 0.94);
+        }}
+      `,
+      transparent: true
     }});
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMesh.rotation.x = -Math.PI / 2;
@@ -473,6 +510,10 @@ def generate_terminal_3d_html(
     const pipeMatMain = new THREE.MeshStandardMaterial({{ color: 0x00d2ff, roughness: 0.2, metalness: 0.8, emissive: 0x004466, emissiveIntensity: 0.3 }});
     const pipeMatRecirc = new THREE.MeshStandardMaterial({{ color: 0x39d353, roughness: 0.2, metalness: 0.8, emissive: 0x005511, emissiveIntensity: 0.3 }});
     const insulationMat = new THREE.MeshStandardMaterial({{ color: 0xd0d7de, roughness: 0.5 }});
+    const windowMat = new THREE.MeshStandardMaterial({{ color: 0x0a1a2a, roughness: 0.9 }});
+    const railingMat = new THREE.MeshStandardMaterial({{ color: 0xd29922, roughness: 0.5 }});
+    const bollardMat = new THREE.MeshStandardMaterial({{ color: 0x6e7681, roughness: 0.6, metalness: 0.8 }});
+    const funnelMat = new THREE.MeshStandardMaterial({{ color: 0x8b1a1a, roughness: 0.7 }});
 
     // Pipe rack under the transfer route (supports supply + return lines)
     (function buildPipeRack() {{
@@ -644,39 +685,88 @@ def generate_terminal_3d_html(
     esdvStation.add(handwheel);
     terminalGroup.add(esdvStation);
 
-    // 2. LNG Carrier Vessel
+    // 2. LNG Carrier Vessel (Moss-type spherical cargo tanks)
     const shipGroup = new THREE.Group();
-    // Hull
-    const hullGeo = new THREE.BoxGeometry(42, 16, 210);
-    const hullMat = new THREE.MeshStandardMaterial({{ color: 0x161b22, roughness: 0.6 }});
-    const hull = new THREE.Mesh(hullGeo, hullMat);
-    hull.position.set(-150, 4, 0);
-    hull.castShadow = true;
-    shipGroup.add(hull);
+    shipGroup.position.set(-150, 0, 0);
 
-    // Keel / Red Waterline
-    const keelGeo = new THREE.BoxGeometry(40, 6, 205);
-    const keelMat = new THREE.MeshStandardMaterial({{ color: 0x8b1a1a, roughness: 0.7 }});
-    const keel = new THREE.Mesh(keelGeo, keelMat);
-    keel.position.set(-150, 0, 0);
+    // Hull above waterline (grey/white)
+    const hullAboveMat = new THREE.MeshStandardMaterial({{ color: 0xd0d7de, roughness: 0.5, metalness: 0.2 }});
+    const hullAbove = new THREE.Mesh(new THREE.BoxGeometry(48, 10, 300), hullAboveMat);
+    hullAbove.position.set(0, 13, 0);
+    hullAbove.castShadow = true;
+    hullAbove.receiveShadow = true;
+    shipGroup.add(hullAbove);
+
+    // Hull below waterline (red antifouling)
+    const hullBelow = new THREE.Mesh(new THREE.BoxGeometry(48, 6, 300), new THREE.MeshStandardMaterial({{ color: 0x8b1a1a, roughness: 0.7 }}));
+    hullBelow.position.set(0, -3, 0);
+    hullBelow.castShadow = true;
+    hullBelow.receiveShadow = true;
+    shipGroup.add(hullBelow);
+
+    // Keel
+    const keel = new THREE.Mesh(new THREE.BoxGeometry(44, 3, 296), new THREE.MeshStandardMaterial({{ color: 0x4a1a1a, roughness: 0.8 }}));
+    keel.position.set(0, -4.5, 0);
+    keel.castShadow = true;
     shipGroup.add(keel);
 
-    // Moss Spherical Tanks (4 spherical tanks)
-    const tankMat = new THREE.MeshStandardMaterial({{ color: 0x00d2ff, roughness: 0.3, metalness: 0.2 }});
-    const tankCovers = new THREE.MeshStandardMaterial({{ color: 0xe6edf3, roughness: 0.5 }});
-    for (let k = 0; k < 4; k++) {{
-      const zPos = -70 + k * 46;
-      const dome = new THREE.Mesh(new THREE.SphereGeometry(14, 32, 24, 0, Math.PI * 2, 0, Math.PI * 0.55), tankCovers);
-      dome.position.set(-150, 12, zPos);
-      dome.castShadow = true;
-      shipGroup.add(dome);
-    }}
+    // Moss-type spherical cargo tanks (5 along centerline)
+    const tankMat = new THREE.MeshStandardMaterial({{ color: 0xe6edf3, roughness: 0.4, metalness: 0.2 }});
+    const tankCapMat = new THREE.MeshStandardMaterial({{ color: 0x00d2ff, roughness: 0.3, metalness: 0.4 }});
+    const tankZs = [-110, -55, 0, 55, 110];
+    tankZs.forEach((zPos) => {{
+      const tank = new THREE.Mesh(new THREE.SphereGeometry(9, 32, 24), tankMat);
+      tank.position.set(0, 14, zPos);
+      tank.castShadow = true;
+      tank.receiveShadow = true;
+      shipGroup.add(tank);
+      // Tank dome cover (upper hemisphere hint)
+      const cap = new THREE.Mesh(new THREE.SphereGeometry(9, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5), tankCapMat);
+      cap.position.set(0, 14, zPos);
+      cap.rotation.x = -Math.PI / 2;
+      shipGroup.add(cap);
+    }});
 
-    // Bridge / Superstructure
-    const bridge = new THREE.Mesh(new THREE.BoxGeometry(32, 24, 25), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc }}));
-    bridge.position.set(-150, 20, 85);
+    // Bridge / superstructure at stern (+z)
+    const bridge = new THREE.Mesh(new THREE.BoxGeometry(30, 14, 24), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.4 }}));
+    bridge.position.set(0, 23, 120);
     bridge.castShadow = true;
+    bridge.receiveShadow = true;
     shipGroup.add(bridge);
+    // Bridge windows (front face toward bow, -z side)
+    const winZ = 108;
+    [-10, 0, 10].forEach((wx) => {{
+      const win = new THREE.Mesh(new THREE.BoxGeometry(5, 6, 1), windowMat);
+      win.position.set(wx, 21, winZ);
+      shipGroup.add(win);
+    }});
+    // Funnel near bridge
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 6, 16), funnelMat);
+    funnel.position.set(0, 19, 106);
+    funnel.castShadow = true;
+    shipGroup.add(funnel);
+
+    // Deck railing along both sides
+    const railY = 16.5;
+    [24, -24].forEach((rx) => {{
+      const sideRail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1, 250), railingMat);
+      sideRail.position.set(rx, railY, 0);
+      shipGroup.add(sideRail);
+    }});
+    [-130, 130].forEach((rz) => {{
+      const endRail = new THREE.Mesh(new THREE.BoxGeometry(50, 1, 0.25), railingMat);
+      endRail.position.set(0, railY, rz);
+      shipGroup.add(endRail);
+    }});
+
+    // Bollards / manifold points at midship (toward LUP side)
+    [-22, 22].forEach((bx) => {{
+      [-5, 5].forEach((bz) => {{
+        const bollard = new THREE.Mesh(new THREE.CylinderGeometry(1, 1, 2, 12), bollardMat);
+        bollard.position.set(bx, 17, bz);
+        shipGroup.add(bollard);
+      }});
+    }});
 
     terminalGroup.add(shipGroup);
 
@@ -698,32 +788,59 @@ def generate_terminal_3d_html(
 
     // 5. Onshore LNG Storage Tank (Full Containment)
     const tankGroup = new THREE.Group();
-    // Concrete Outer Tank Wall
-    const tankWall = new THREE.Mesh(
-      new THREE.CylinderGeometry(48, 48, 54, 48),
+    // Concrete outer containment wall
+    const outerWall = new THREE.Mesh(
+      new THREE.CylinderGeometry(60, 60, 56, 64),
       new THREE.MeshStandardMaterial({{ color: 0x8c959f, roughness: 0.85 }})
     );
-    tankWall.position.set(TANK_X, 27, 0);
-    tankWall.castShadow = true;
-    tankWall.receiveShadow = true;
-    tankGroup.add(tankWall);
+    outerWall.position.set(TANK_X, 28, 0);
+    outerWall.castShadow = true;
+    outerWall.receiveShadow = true;
+    tankGroup.add(outerWall);
 
-    // Spherical Dome Roof
+    // Domed (conical prestressed-concrete) roof on the outer wall
     const roof = new THREE.Mesh(
-      new THREE.SphereGeometry(50, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.28),
-      new THREE.MeshStandardMaterial({{ color: 0xd0d7de, roughness: 0.5 }})
+      new THREE.CylinderGeometry(60, 7, 18, 64),
+      new THREE.MeshStandardMaterial({{ color: 0x9ca3af, roughness: 0.7 }})
     );
-    roof.position.set(TANK_X, 36, 0);
+    roof.position.set(TANK_X, 65, 0);
     roof.castShadow = true;
+    roof.receiveShadow = true;
     tankGroup.add(roof);
 
     // Bund wall around tank
-    const bundGeo = new THREE.CylinderGeometry(68, 68, 8, 36, 1, true);
-    const bundMat = new THREE.MeshStandardMaterial({{ color: 0x57606a, side: THREE.DoubleSide }});
+    const bundGeo = new THREE.CylinderGeometry(76, 76, 9, 48, 1, true);
+    const bundMat = new THREE.MeshStandardMaterial({{ color: 0x4a5560, roughness: 0.9, side: THREE.DoubleSide }});
     const bund = new THREE.Mesh(bundGeo, bundMat);
-    bund.position.set(TANK_X, 4, 0);
+    bund.position.set(TANK_X, 4.5, 0);
     bund.castShadow = true;
     tankGroup.add(bund);
+
+    // Inner 9% Ni steel tank (slightly smaller, inside outer wall)
+    const innerTank = new THREE.Mesh(
+      new THREE.CylinderGeometry(53, 53, 50, 64),
+      new THREE.MeshStandardMaterial({{ color: 0x374151, roughness: 0.4, metalness: 0.85 }})
+    );
+    innerTank.position.set(TANK_X, 25, 0);
+    innerTank.castShadow = true;
+    innerTank.receiveShadow = true;
+    tankGroup.add(innerTank);
+
+    // LNG liquid level (~85 % of inner tank height)
+    const fillH = 50 * 0.85;
+    const liquid = new THREE.Mesh(
+      new THREE.CylinderGeometry(52, 52, fillH, 64),
+      new THREE.MeshStandardMaterial({{ color: 0x1f6feb, roughness: 0.3, transparent: true, opacity: 0.45 }})
+    );
+    liquid.position.set(TANK_X, fillH / 2, 0);
+    tankGroup.add(liquid);
+    // Liquid surface ring
+    const surface = new THREE.Mesh(
+      new THREE.CylinderGeometry(52.1, 52.1, 0.6, 64),
+      new THREE.MeshStandardMaterial({{ color: 0x3fb950, roughness: 0.2, metalness: 0.9 }})
+    );
+    surface.position.set(TANK_X, fillH + 0.3, 0);
+    tankGroup.add(surface);
 
     // Recirculation Pump P-201 Station
     const pumpGeo = new THREE.CylinderGeometry(2, 2.5, 4, 16);
@@ -1004,8 +1121,8 @@ def generate_terminal_3d_html(
       const delta = clock.getDelta();
       const time = clock.getElapsedTime();
 
-      // Subtle water ripple oscillation
-      waterMesh.position.y = Math.sin(time * 0.8) * 0.25;
+      // Animate calm sea waves via shader uniform
+      waterMat.uniforms.uTime.value = time;
 
       // Update flow particles along main curve (Forward flow: Ship -> Tank)
       mainParticles.forEach(p => {{

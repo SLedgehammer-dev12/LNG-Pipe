@@ -73,3 +73,17 @@ def test_vacuum_jacketed_versus_standard_insulation():
     # Vacuum jacketed pipe must have significantly lower heat ingress despite smaller thickness
     assert q_vacuum < q_pir
     assert q_vacuum < 15.0
+
+
+def test_b9_radial_consistency_check():
+    # B9: 1D vs 3D wall temperature consistency diagnostic
+    from core.heat_transfer import check_radial_consistency
+    # Close temperatures -> consistent
+    r = check_radial_consistency(112.0, 112.4, "x=100m")
+    assert r["consistent"] is True
+    assert r["delta_k"] == 0.4
+    # Far-apart temperatures -> not consistent
+    r2 = check_radial_consistency(112.0, 118.0, "x=200m")
+    assert r2["consistent"] is False
+    assert r2["relative_delta"] > 0.05
+

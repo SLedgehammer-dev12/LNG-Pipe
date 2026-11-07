@@ -7,12 +7,39 @@ import math
 from dataclasses import dataclass
 
 
+# Cryogenic piping material allowable properties (ASME B31.3 Table A-1 / A-1M, cryogenic).
+# S_c: basic allowable stress (Pa) at -162 C; alpha: mean CTE (1/K); E: Young's modulus (Pa);
+# rho: density (kg/m^3). Conservative values; engineer shall verify against material spec.
+MATERIAL_PROPERTIES = {
+    "Paslanmaz Çelik 304L/316L": dict(
+        S_c=138e6, alpha=15.8e-6, E=200e9, rho=8000.0
+    ),
+    "%9 Nikel Çeliği (Cryogenic 9% Ni)": dict(
+        S_c=155e6, alpha=12.0e-6, E=190e9, rho=7900.0
+    ),
+    "Invar 36 (Düşük Genleşmeli)": dict(
+        S_c=125e6, alpha=1.2e-6, E=145e9, rho=8100.0
+    ),
+    "Alüminyum 5083-O": dict(
+        S_c=95e6, alpha=23.6e-6, E=70e9, rho=2660.0
+    ),
+}
+
+MATERIAL_ALIASES = {
+    "Paslanmaz Çelik 304L/316L": "304L/316L",
+    "%9 Nikel Çeliği (Cryogenic 9% Ni)": "9%Ni",
+    "Invar 36 (Düşük Genleşmeli)": "Invar36",
+    "Alüminyum 5083-O": "Al5083",
+}
+
+
 @dataclass(frozen=True)
 class PipelineSpecification:
     outer_diameter_m: float
     design_pressure_pa: float
     operating_pressure_pa: float
     pipeline_length_m: float
+    material_name: str = "Paslanmaz Çelik 304L/316L"
     material_allowable_stress_pa: float = 138e6  # 304L/316L S at cryogenic temp (Pa)
     weld_joint_efficiency: float = 1.00          # Seamless or 100% RT E
     y_coefficient: float = 0.40                  # Austenitic steel thin-wall Y
@@ -23,6 +50,23 @@ class PipelineSpecification:
     fluid_density_kg_m3: float = 430.0           # LNG density at -162 C
     fluid_bulk_modulus_pa: float = 1.15e9        # LNG liquid bulk modulus K (Pa)
     pipe_youngs_modulus_pa: float = 200e9        # Steel E (Pa)
+    material_allowable_stress_hot_pa: float = 0.0  # S_h at hot condition (Pa); 0 => cold-only displacement
+    stress_range_factor: float = 1.0             # f per B31.3 319.4.4 (1.0 <= ~7000 cycles)
+    sustained_stress_pa: float = 0.0             # S_L: pressure + weight sustained stress (Pa)
+
+
+def spec_from_material(material_name: str, **overrides) -> PipelineSpecification:
+    """Build a PipelineSpecification keyed by user-facing material name."""
+    props = MATERIAL_PROPERTIES.get(material_name, MATERIAL_PROPERTIES["Paslanmaz Çelik 304L/316L"])
+    data = {
+        "material_allowable_stress_pa": props["S_c"],
+        "thermal_expansion_coeff": props["alpha"],
+        "pipe_youngs_modulus_pa": props["E"],
+        "fluid_density_kg_m3": props["rho"],
+        "material_name": material_name,
+    }
+    data.update(overrides)
+    return PipelineSpecification(**data)
 
 
 def calculate_asme_b31_3_thickness(spec: PipelineSpecification) -> dict:
@@ -59,8 +103,20 @@ def calculate_thermal_contraction_and_omega_loop(
     total_contraction_1km = contraction_per_meter * 1000.0
     delta_l_loop = contraction_per_meter * anchor_distance_m
 
-    # Displacement stress limit S_A = 1.25 * (S_c + S_h)
-    s_a = 1.25 * (spec.material_allowable_stress_pa + spec.material_allowable_stress_pa)
+    # Displacement stress limit S_A (ASME B31.3 319.4.1):
+    #   Eq. 1a: S_A = f (1.25 S_c + 0.25 S_h)
+    #   Eq. 1b: S_A = f [1.25 (S_c + S_h) - S_L]  when S_h > S_L
+    # S_c = cold allowable, S_h = hot allowable (0 => cold-only), f = stress-range factor,
+    # S_L = sustained stress (pressure + weight).
+    s_c = spec.material_allowable_stress_pa
+    s_h = spec.material_allowable_stress_hot_pa
+    f = spec.stress_range_factor
+    s_l = spec.sustained_stress_pa
+    if s_h > s_l:
+        s_a = f * (1.25 * (s_c + s_h) - s_l)   # Eq. 1b
+    else:
+        s_a = f * (1.25 * s_c + 0.25 * s_h)     # Eq. 1a
+    s_a = max(s_a, 1e5)
 
     # Minimum leg length H_min = sqrt(6 * E * D * DeltaL / S_A)
     e = spec.pipe_youngs_modulus_pa
