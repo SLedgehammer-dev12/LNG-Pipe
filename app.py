@@ -373,6 +373,11 @@ with st.sidebar.expander("☀️ Çevre ve Dış Ortam", expanded=False):
     amb_temp_c = st.slider("Ortam Sıcaklığı T_amb (°C)", min_value=-20.0, max_value=55.0, value=25.0, step=1.0)
     wind_speed_m_s = st.slider("Rüzgar Hızı (m/s)", min_value=0.5, max_value=30.0, value=3.0, step=0.5)
 
+with st.sidebar.expander("📐 Görüntü Birimleri", expanded=False):
+    disp_temp_unit = st.selectbox("Sıcaklık Birimi", ["°C", "K", "°F"], index=0, help="Hesaplama içeri Kelvin'dir; sadece gösterim dönüştürülür.")
+    disp_press_unit = st.selectbox("Basınç Birimi", ["bar", "kPa", "psi", "MPa"], index=0, help="Hesaplama içeri Pascal'dır; sadece gösterim dönüştürülür.")
+    disp_flow_unit = st.selectbox("Kütlesel Akış Birimi", ["kg/s", "kg/h", "t/h"], index=0, help="Hesaplama içeri kg/sn'dir; sadece gösterim dönüştürülür.")
+
 with st.sidebar.expander("📐 ASME B31.3 & Vana Kapanma (Surge)", expanded=False):
     design_p_bar = st.number_input("Tasarım Basıncı P_design (bar)", min_value=2.0, max_value=100.0, value=20.0, step=2.0)
     valve_closure_time_s = st.slider("ESDV-101 Vana Kapanma Süresi (s)", min_value=0.5, max_value=30.0, value=15.0, step=0.5, help="SIGTTO tavsiyesi: Akustik koç darbesini önlemek için t >= 15-20 s")
@@ -387,6 +392,50 @@ else:
     n_radial = 8
     n_azimuthal = 8
     n_axial = 100
+
+
+# --- GÖSTERİM BİRİM DÖNÜŞÜMLERİ (hesaplama içeri K / Pa / kg/s kalır) ---
+def _t_show(temp_k, unit):
+    """Kelvin'i seçilen gösterim birimine dönüştürür."""
+    c = temp_k - 273.15
+    if unit == "K":
+        return temp_k
+    if unit == "°F":
+        return c * 9.0 / 5.0 + 32.0
+    return c  # °C
+
+
+def _p_show(pa, unit):
+    """Pascal'ı seçilen gösterim birimine dönüştürür."""
+    if unit == "kPa":
+        return pa / 1.0e3
+    if unit == "psi":
+        return pa / 6894.757
+    if unit == "MPa":
+        return pa / 1.0e6
+    return pa / 1.0e5  # bar
+
+
+def _m_show(kg_s, unit):
+    """kg/sn'i seçilen gösterim birimine dönüştürür."""
+    if unit == "kg/h":
+        return kg_s * 3600.0
+    if unit == "t/h":
+        return kg_s * 3.6
+    return kg_s  # kg/s
+
+
+def _unit_label_temp(unit):
+    return {"K": "K", "°F": "°F"}.get(unit, "°C")
+
+
+def _unit_label_press(unit):
+    return {"kPa": "kPa", "psi": "psi", "MPa": "MPa"}.get(unit, "bar")
+
+
+def _unit_label_flow(unit):
+    return {"kg/h": "kg/h", "t/h": "t/h"}.get(unit, "kg/s")
+
 
 # --- EXECUTE SIMULATION ---
 @st.cache_data(show_spinner=False)
@@ -452,14 +501,19 @@ mode_label = "3D Sonlu Hacimler (Silindirik r, θ, z)" if is_3d_mode else "1D So
 st.markdown(f'<div class="main-header">❄️ LNG Boru Akışı Termo-Hidrolik Simülatörü <span style="font-size:16px; color:#58a6ff; font-weight:600;">[{mode_label}]</span></div>', unsafe_allow_html=True)
 st.markdown('<div class="sub-header">Cryogenic LNG Pipeline Thermal Ingress, Hydraulic Pressure Drop & Near-Wall / Bulk Flashing Risk Engine</div>', unsafe_allow_html=True)
 
+u_t = _unit_label_temp(disp_temp_unit)
+u_p = _unit_label_press(disp_press_unit)
+u_f = _unit_label_flow(disp_flow_unit)
+
 # Flashing Banner
 if is_3d_mode:
     has_flashed = sim_results.has_wall_flashed or sim_results.has_bulk_flashed
+    wall_t_d = _t_show(sim_results.wall_temperature_k[-1], disp_temp_unit)
     if sim_results.has_wall_flashed and not sim_results.has_bulk_flashed:
         st.markdown(f"""
         <div class="status-alert-box">
             ⚠️ <b>3D ERKEN UYARI: ÇEPERDE KAYNAMA / FLAŞ BAŞLANGICI!</b><br/>
-            Boru çeperindeki sınır tabaka akışkan sıcaklığı ({sim_results.wall_temperature_k[-1] - 273.15:.2f} °C), yığın sıvıdan sıcaktır. Hattın <b>{sim_results.wall_flashing_point_m:.1f}. metresinde</b> boru iç çeperinde kavitasyon / mikro-kaynama başlamıştır (Yığın sıvı henüz doymamıştır).
+            Boru çeperindeki sınır tabaka akışkan sıcaklığı ({wall_t_d:.2f} {u_t}), yığın sıvıdan sıcaktır. Hattın <b>{sim_results.wall_flashing_point_m:.1f}. metresinde</b> boru iç çeperinde kavitasyon / mikro-kaynama başlamıştır (Yığın sıvı henüz doymamıştır).
         </div>
         """, unsafe_allow_html=True)
     elif sim_results.has_bulk_flashed:
@@ -470,10 +524,11 @@ if is_3d_mode:
         </div>
         """, unsafe_allow_html=True)
     else:
+        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, disp_press_unit)
         st.markdown(f"""
         <div class="status-safe-box">
             ✓ <b>GÜVENLİ İŞLETME: HEM ÇEPER HEM YIĞIN TAM SIVI FAZDA</b><br/>
-            Boru boyunca en kritik iç çeperde dahi buharlaşma marjı pozitiftir (Minimum güvenlik marjı: {sim_results.min_flashing_margin_pa / 1e5:.2f} bar).
+            Boru boyunca en kritik iç çeperde dahi buharlaşma marjı pozitiftir (Minimum güvenlik marjı: {min_margin_d:.2f} {u_p}).
         </div>
         """, unsafe_allow_html=True)
 else:
@@ -486,38 +541,48 @@ else:
         </div>
         """, unsafe_allow_html=True)
     else:
+        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, disp_press_unit)
         st.markdown(f"""
         <div class="status-safe-box">
             ✓ <b>GÜVENLİ İŞLETME: TEK FAZ SIVI AKIŞI KORUNUYOR</b><br/>
-            Minimum güvenlik marjı: {sim_results.min_flashing_margin_pa / 1e5:.2f} bar.
+            Minimum güvenlik marjı: {min_margin_d:.2f} {u_p}.
         </div>
         """, unsafe_allow_html=True)
 
-# Top KPI metrics
+# Top KPI metrics (iç hesaplama K / Pa / kg/s; gösterim seçilen birimde)
 c1, c2, c3, c4, c5 = st.columns(5)
 if is_3d_mode:
-    outlet_t_c = sim_results.bulk_temperature_k[-1] - 273.15
-    delta_t = sim_results.bulk_temperature_k[-1] - (inlet_t_c + 273.15)
-    outlet_p_bar = sim_results.pressure_pa[-1] / 1e5
-    outlet_psat_bar = sim_results.wall_vapor_pressure_pa[-1] / 1e5
-    delta_psat_bar = (sim_results.wall_vapor_pressure_pa[-1] - sim_results.wall_vapor_pressure_pa[0]) / 1e5
-    min_margin_bar = sim_results.min_flashing_margin_pa / 1e5
+    outlet_t_k = sim_results.bulk_temperature_k[-1]
+    delta_t_k = sim_results.bulk_temperature_k[-1] - (inlet_t_c + 273.15)
+    outlet_p_pa = sim_results.pressure_pa[-1]
+    outlet_psat_pa = sim_results.wall_vapor_pressure_pa[-1]
+    delta_psat_pa = sim_results.wall_vapor_pressure_pa[-1] - sim_results.wall_vapor_pressure_pa[0]
+    min_margin_pa = sim_results.min_flashing_margin_pa
 else:
-    outlet_t_c = sim_results.outlet_temperature_k - 273.15
-    delta_t = sim_results.outlet_temperature_k - (inlet_t_c + 273.15)
-    outlet_p_bar = sim_results.outlet_pressure_pa / 1e5
-    outlet_psat_bar = sim_results.outlet_vapor_pressure_pa / 1e5
-    delta_psat_bar = (sim_results.outlet_vapor_pressure_pa - sim_results.inlet_vapor_pressure_pa) / 1e5
-    min_margin_bar = sim_results.min_flashing_margin_pa / 1e5
+    outlet_t_k = sim_results.outlet_temperature_k
+    delta_t_k = sim_results.outlet_temperature_k - (inlet_t_c + 273.15)
+    outlet_p_pa = sim_results.outlet_pressure_pa
+    outlet_psat_pa = sim_results.outlet_vapor_pressure_pa
+    delta_psat_pa = sim_results.outlet_vapor_pressure_pa - sim_results.inlet_vapor_pressure_pa
+    min_margin_pa = sim_results.min_flashing_margin_pa
 
-delta_p_bar = sim_results.total_pressure_drop_pa / 1e5
+delta_p_pa = sim_results.total_pressure_drop_pa
+
+outlet_t_d = _t_show(outlet_t_k, disp_temp_unit)
+delta_t_d = _t_show(delta_t_k, disp_temp_unit)  # K delta == °C delta
+outlet_p_d = _p_show(outlet_p_pa, disp_press_unit)
+delta_p_d = _p_show(delta_p_pa, disp_press_unit)
+outlet_psat_d = _p_show(outlet_psat_pa, disp_press_unit)
+delta_psat_d = _p_show(delta_psat_pa, disp_press_unit)
+min_margin_d = _p_show(min_margin_pa, disp_press_unit)
+heat_kw = sim_results.total_heat_ingress_w / 1000.0
 
 with c1:
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Çıkış Yığın Sıcaklığı</div>
-        <div class="metric-value">{outlet_t_c:.2f} °C</div>
-        <div class="metric-delta delta-up">▲ +{delta_t:.2f} °C ısınma</div>
+        <div class="metric-value">{outlet_t_d:.2f} {u_t}</div>
+        <div class="metric-delta delta-up">▲ +{delta_t_d:.2f} {u_t} ısınma</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -525,8 +590,8 @@ with c2:
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Çıkış Statik Basıncı</div>
-        <div class="metric-value">{outlet_p_bar:.2f} bar</div>
-        <div class="metric-delta delta-down">▼ -{delta_p_bar:.2f} bar hidrolik kayıp</div>
+        <div class="metric-value">{outlet_p_d:.2f} {u_p}</div>
+        <div class="metric-delta delta-down">▼ -{delta_p_d:.2f} {u_p} hidrolik kayıp</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -534,28 +599,28 @@ with c3:
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Çıkış Buhar Basıncı (Psat)</div>
-        <div class="metric-value">{outlet_psat_bar:.2f} bar</div>
-        <div class="metric-delta delta-up">▲ +{delta_psat_bar:.2f} bar artış</div>
+        <div class="metric-value">{outlet_psat_d:.2f} {u_p}</div>
+        <div class="metric-delta delta-up">▲ +{delta_psat_d:.2f} {u_p} artış</div>
     </div>
     """, unsafe_allow_html=True)
 
 with c4:
-    margin_class = "delta-safe" if min_margin_bar >= 0.5 else "delta-up"
+    margin_class = "delta-safe" if min_margin_d >= 0.5 else "delta-up"
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Min. Kavitasyon Marjı</div>
-        <div class="metric-value">{min_margin_bar:.2f} bar</div>
+        <div class="metric-value">{min_margin_d:.2f} {u_p}</div>
         <div class="metric-delta {margin_class}">P - Psat marjı</div>
     </div>
     """, unsafe_allow_html=True)
 
 with c5:
-    heat_kw = sim_results.total_heat_ingress_w / 1000.0
+    m_flow_d = _m_show(mass_flow_kg_s, disp_flow_unit)
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Toplam Isı Girişi Q_tot</div>
         <div class="metric-value">{heat_kw:.1f} kW</div>
-        <div class="metric-delta" style="color:#d29922;">{sim_results.total_heat_ingress_w / length_m:.1f} W/m hat kaybı</div>
+        <div class="metric-delta" style="color:#d29922;">{sim_results.total_heat_ingress_w / length_m:.1f} W/m hat kaybı | Akış {m_flow_d:.1f} {u_f}</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -596,16 +661,20 @@ omega_mech = calculate_thermal_contraction_and_omega_loop(pipe_spec, anchor_dist
 
 with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik Doğrulama", expanded=True):
     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
+    bog_kg_s = terminal_ops.bog_rate_kg_h / 3600.0
+    p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, disp_press_unit)
+    surge_d = _p_show(surge_mech["actual_surge_bar"] * 1e5, disp_press_unit)
+    peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, disp_press_unit)
     with col_t1:
-        st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{terminal_ops.bog_rate_kg_h:.1f} kg/h</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
+        st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{_m_show(bog_kg_s, disp_flow_unit):.2f} {u_f}</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
     with col_t2:
         st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} m)</span>", unsafe_allow_html=True)
     with col_t3:
         t_ok = wall_thickness_mm >= asme_mech["t_required_min_mm"]
-        st.markdown(f"**ASME B31.3 Et Kalınlığı:**<br/><span style='color:{'#3fb950' if t_ok else '#f85149'}; font-size:16px; font-weight:700;'>t_req = {asme_mech['t_required_min_mm']:.2f} mm</span><br/><span style='color:#8b949e; font-size:12px;'>Mevcut: {wall_thickness_mm:.1f} mm ({'✓ UYGUN' if t_ok else '⚠️ YETERSİZ'}) | P_test: {asme_mech['hydrostatic_test_pressure_bar']:.1f} bar</span>", unsafe_allow_html=True)
+        st.markdown(f"**ASME B31.3 Et Kalınlığı:**<br/><span style='color:{'#3fb950' if t_ok else '#f85149'}; font-size:16px; font-weight:700;'>t_req = {asme_mech['t_required_min_mm']:.2f} mm</span><br/><span style='color:#8b949e; font-size:12px;'>Mevcut: {wall_thickness_mm:.1f} mm ({'✓ UYGUN' if t_ok else '⚠️ YETERSİZ'}) | P_test: {p_test_d:.2f} {u_p}</span>", unsafe_allow_html=True)
     with col_t4:
         surge_safe = surge_mech["actual_surge_bar"] < 5.0
-        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#d29922'}; font-size:16px; font-weight:700;'>+{surge_mech['actual_surge_bar']:.2f} bar</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {surge_mech['peak_line_pressure_bar']:.1f} bar (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
+        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#d29922'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_p}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
 
 # --- VIEW TABS ---
 tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([

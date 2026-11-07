@@ -390,31 +390,34 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
     // 1. LUP Dolphin (Loading / Unloading Platform)
     const lupPlatform = createDolphin(-120, 0, 36, 48, 12, 6, "LUP Dolphin");
 
-    // Marine Loading Arms (MLAs) on LUP
+    // Berthing dolphin (kevale/dofen) right next to the vessel for mooring & manifolds
+    const berthDolphin = createDolphin(-162, 0, 24, 34, 10, 4, "Gemi Yanı Dofeni");
+
+    // Marine Loading Arms (MLAs): LUP dolphin outer edge -> vessel manifold
     for (let i = 0; i < 4; i++) {{
       const armGroup = new THREE.Group();
       const zOffset = -15 + i * 10;
-      
-      // Base pedestal
+
+      // Base pedestal on LUP deck outer edge (toward vessel)
       const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 5, 16), steelMat);
-      ped.position.set(-10, 14.5, zOffset);
+      ped.position.set(-132, 14.5, zOffset);
       armGroup.add(ped);
 
-      // Inboard arm
-      const inArm = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 12, 12), yellowMat);
-      inArm.position.set(-10, 21, zOffset);
-      inArm.rotation.z = 0.4;
+      // Inboard arm (rises from pedestal)
+      const inArm = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 11, 12), yellowMat);
+      inArm.position.set(-132, 20, zOffset);
+      inArm.rotation.z = 0.35;
       armGroup.add(inArm);
 
-      // Outboard arm leaning to vessel
-      const outArm = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 14, 12), yellowMat);
-      outArm.position.set(-15, 22, zOffset);
-      outArm.rotation.z = -0.7;
+      // Outboard arm reaching across to vessel manifold
+      const outArm = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 16, 12), yellowMat);
+      outArm.position.set(-139, 21, zOffset);
+      outArm.rotation.z = -0.5;
       armGroup.add(outArm);
 
-      // Connecting nozzle
-      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 4, 12), steelMat);
-      nozzle.position.set(-20, 17, zOffset);
+      // Connecting nozzle at vessel manifold (ship side)
+      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 5, 12), steelMat);
+      nozzle.position.set(-148, 13, zOffset);
       nozzle.rotation.z = Math.PI / 2;
       armGroup.add(nozzle);
 
@@ -528,23 +531,22 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
     // 6. PIPELINES: Main LNG Line (Blue) and Recirculation Line (Green)
     // Construction of 3D Path through Omega Loops
     function buildPipeCurve(zOffset, loopExtZ) {{
+      const D = loopExtZ; // yatay omega-döngü kenar uzaklığı (genleşme emniyeti)
       const pts = [
         new THREE.Vector3(-115, 14, zOffset),
         new THREE.Vector3(-20, 14, zOffset),
-        // Omega Loop 1
-        new THREE.Vector3(-12, 14, zOffset),
-        new THREE.Vector3(-10, 14, zOffset + loopExtZ),
-        new THREE.Vector3(0, 14, zOffset + loopExtZ + 8),
-        new THREE.Vector3(10, 14, zOffset + loopExtZ),
-        new THREE.Vector3(12, 14, zOffset),
+        // Omega Loop 1: iki paralel yateral bacak + 180° dönüş (plan görünümünde Ω)
+        new THREE.Vector3(-16, 14, zOffset),
+        new THREE.Vector3(-16, 14, zOffset + D),
+        new THREE.Vector3(6, 14, zOffset + D),
+        new THREE.Vector3(6, 14, zOffset),
         new THREE.Vector3(80, 14, zOffset),
         // Omega Loop 2
-        new THREE.Vector3(88, 14, zOffset),
-        new THREE.Vector3(90, 14, zOffset + loopExtZ),
-        new THREE.Vector3(100, 14, zOffset + loopExtZ + 8),
-        new THREE.Vector3(110, 14, zOffset + loopExtZ),
-        new THREE.Vector3(112, 14, zOffset),
-        // Onshore run to tank / pump
+        new THREE.Vector3(84, 14, zOffset),
+        new THREE.Vector3(84, 14, zOffset + D),
+        new THREE.Vector3(106, 14, zOffset + D),
+        new THREE.Vector3(106, 14, zOffset),
+        // Karaya çıkış / tank bağlantısı
         new THREE.Vector3(160, 12, zOffset),
         new THREE.Vector3(220, 8, zOffset)
       ];
