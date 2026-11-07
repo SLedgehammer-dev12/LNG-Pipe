@@ -62,7 +62,6 @@ def spec_from_material(material_name: str, **overrides) -> PipelineSpecification
         "material_allowable_stress_pa": props["S_c"],
         "thermal_expansion_coeff": props["alpha"],
         "pipe_youngs_modulus_pa": props["E"],
-        "fluid_density_kg_m3": props["rho"],
         "material_name": material_name,
     }
     data.update(overrides)
@@ -71,6 +70,8 @@ def spec_from_material(material_name: str, **overrides) -> PipelineSpecification
 
 def calculate_asme_b31_3_thickness(spec: PipelineSpecification) -> dict:
     """ASME B31.3 Para 304.1.2 Minimum Pressure Design Thickness & Hydrotest."""
+    if spec.design_pressure_pa <= 0:
+        raise ValueError(f"design_pressure_pa must be > 0 (got {spec.design_pressure_pa})")
     p = spec.design_pressure_pa
     d = spec.outer_diameter_m
     s = spec.material_allowable_stress_pa

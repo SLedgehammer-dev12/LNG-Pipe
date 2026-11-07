@@ -105,6 +105,16 @@ class PipelineSolver3D:
         nt = self.config.n_azimuthal
         nz = self.config.n_axial
 
+        # Guard against zero or negative mass flow (static / standby / outage mode)
+        if pipe_cfg.mass_flow_rate_kg_s <= 0.0:
+            raise ValueError(
+                f"mass_flow_rate_kg_s must be > 0 (got {pipe_cfg.mass_flow_rate_kg_s}); "
+                "use 1D solver or set a small positive flow for standby."
+            )
+
+        # Methane triple point pressure (11.696 kPa) — pressure floor for both solvers
+        P_TRIPLE_PA = 11696.0
+
         r_max = pipe_cfg.inner_diameter_m / 2.0
         dz = pipe_cfg.length_m / nz
         d_theta = 2.0 * math.pi / nt
@@ -287,7 +297,7 @@ class PipelineSolver3D:
                 f_local = calculate_churchill_friction_factor(re_local, rel_roughness)
                 dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * props.density * (v_mean ** 2)) * phi_l_sq
                 dp_hydro = props.density * g * sin_incline * dz
-                curr_p = max(1000.0, curr_p - dp_fric - dp_hydro)
+                curr_p = max(P_TRIPLE_PA, curr_p - dp_fric - dp_hydro)
 
         results.temp_field_k = temp_field
         results.total_heat_ingress_w = total_heat_ingress

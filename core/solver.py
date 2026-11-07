@@ -125,8 +125,7 @@ class PipelineSolver:
                 t_sat, _ = self.fm.get_bubble_dew_temperature(curr_p)
                 curr_t = t_sat  # mixture temperature pinned to saturation at local pressure
                 h_liq = self.fm.get_properties(t_sat, curr_p).enthalpy
-                h_vap = self.fm.get_properties(t_sat, curr_p + 100.0).enthalpy  # approximate sat-vapor via property call
-                h_fg = max(h_vap - h_liq, 1e4)
+                h_fg = max(h_fg, 1e4)
                 # Quality from cumulative enthalpy relative to saturated liquid at local P
                 vapor_quality = min(0.99, max(0.0, (curr_h - h_liq) / h_fg))
                 # Saturated vapor density via ideal-gas estimate for Lockhart-Martinelli

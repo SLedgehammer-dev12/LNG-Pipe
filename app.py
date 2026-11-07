@@ -380,6 +380,11 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
 
         active_composition = st.session_state["custom_composition"]
 
+    # Guard: if all composition values are zero, default to pure methane
+    if sum(active_composition.values()) <= 0.0:
+        st.warning("⚠️ Tüm bileşen oranları sıfır. Varsayılan olarak saf metan seçildi.")
+        active_composition = {"Methane": 100.0}
+
     inlet_t_k, t_unit = unit_input(
         "Giriş Sıcaklığı T_in", "temperature", "inlet_t",
         (preset["inlet_t_c"] + 273.15) if preset else 111.65,

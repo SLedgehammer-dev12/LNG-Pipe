@@ -38,17 +38,26 @@ class PipeThermalModel:
         self.outer_pipe_diameter_m = self.inner_diameter_m + 2.0 * self.wall_thickness_m
 
     def _calculate_internal_convection_coeff(self, props: FluidProperties, mass_flow_rate: float) -> float:
-        """Internal forced convection coefficient h_i (W/m^2*K) using Gnielinski/Dittus-Boelter."""
+        """Internal forced convection coefficient h_i (W/m^2*K) using Gnielinski/Dittus-Boelter.
+
+        Smooth laminar-turbulent transition in Re ∈ [2000, 4000] to avoid the
+        ~300% Nusselt jump at Re = 2300 with the hard switch.
+        """
         flow_area = (math.pi / 4.0) * (self.inner_diameter_m ** 2)
         velocity = mass_flow_rate / (props.density * flow_area)
         re = (props.density * velocity * self.inner_diameter_m) / props.viscosity
         pr = (props.specific_heat * props.viscosity) / props.thermal_conductivity
 
-        if re < 2300:
+        if re <= 2000.0:
             nu = 4.36  # Constant heat flux laminar flow
+        elif re >= 4000.0:
+            nu = 0.023 * (re ** 0.8) * (pr ** 0.4)  # Gnielinski / Dittus-Boelter
         else:
-            # Gnielinski / Dittus-Boelter for heating of fluid
-            nu = 0.023 * (re ** 0.8) * (pr ** 0.4)
+            # Linear blend in transition range 2000–4000
+            blend = (re - 2000.0) / 2000.0
+            nu_lam = 4.36
+            nu_turb = 0.023 * (re ** 0.8) * (pr ** 0.4)
+            nu = (1.0 - blend) * nu_lam + blend * nu_turb
 
         return (nu * props.thermal_conductivity) / self.inner_diameter_m
 
