@@ -24,6 +24,7 @@ from core.mechanics import (
     calculate_thermal_contraction_and_omega_loop,
     calculate_joukowsky_surge,
 )
+from core.pipe_schedule import PIPE_TABLE_GROUPS, inner_diameter_mm
 from reports.pdf_report import generate_pdf_report
 
 st.set_page_config(
@@ -208,11 +209,38 @@ preset = PRESETS[selected_preset_name]
 
 with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
     length_m = st.number_input("Boru Uzunluğu L (m)", min_value=5.0, max_value=10000.0, value=preset["length_m"] if preset else 300.0, step=25.0)
-    diameter_mm = st.number_input("Boru İç Çapı ID (mm)", min_value=25.0, max_value=1200.0, value=preset["diameter_mm"] if preset else 200.0, step=10.0)
-    wall_thickness_mm = st.number_input("Boru Et Kalınlığı (mm)", min_value=1.5, max_value=30.0, value=preset["thickness_mm"] if preset else 6.0, step=0.5)
+
+    geom_mode = st.radio(
+        "Boru Boyutlandırma Yöntemi",
+        ["ASME Tablosu", "Manuel Giriş"],
+        index=0 if preset is None else 1,
+        horizontal=True,
+    )
+    if geom_mode == "ASME Tablosu":
+        geom_group = st.selectbox("Boru Standardı", list(PIPE_TABLE_GROUPS.keys()), index=1)
+        pipe_table = PIPE_TABLE_GROUPS[geom_group]
+        dn_keys = list(pipe_table.keys())
+        dn_default = dn_keys.index('DN200 (NPS 8")') if 'DN200 (NPS 8")' in dn_keys else 0
+        dn_label = st.selectbox("Anma Çapı (DN / NPS)", dn_keys, index=dn_default)
+        schedule_keys = list(pipe_table[dn_label]["schedules"].keys())
+        sched_default = "40S" if "40S" in schedule_keys else ("Sch 40" if "Sch 40" in schedule_keys else schedule_keys[0])
+        schedule_label = st.selectbox("Et Kalınlığı / Schedule (mm)", schedule_keys, index=schedule_keys.index(sched_default))
+        od_mm = pipe_table[dn_label]["od_mm"]
+        wall_thickness_mm = pipe_table[dn_label]["schedules"][schedule_label]
+        diameter_mm = inner_diameter_mm(od_mm, wall_thickness_mm)
+        st.caption(f"OD {od_mm:.1f} mm · ID {diameter_mm:.2f} mm · t {wall_thickness_mm:.2f} mm · {geom_group}")
+    else:
+        diameter_mm = st.number_input("Boru İç Çapı ID (mm)", min_value=25.0, max_value=1200.0, value=preset["diameter_mm"] if preset else 200.0, step=10.0)
+        wall_thickness_mm = st.number_input("Boru Et Kalınlığı (mm)", min_value=1.5, max_value=60.0, value=preset["thickness_mm"] if preset else 6.0, step=0.5)
+
     inclination_deg = st.number_input("Hat Eğim Açısı θ (°)", min_value=-90.0, max_value=90.0, value=preset["incline"] if preset else 0.0, step=1.0, help="Pozitif = Yokuş yukarı (hidrostatik basınç kaybı ekler)")
-    pipe_mat_name = st.selectbox("Boru Malzemesi", list(PIPE_MATERIALS.keys()))
+    pipe_mat_name = st.selectbox("Boru Malzemesi (ısıl iletkenlik)", list(PIPE_MATERIALS.keys()))
     roughness_um = st.number_input("Boru İç Pürüzlülüğü ε (µm)", min_value=1.0, max_value=500.0, value=45.0, step=5.0)
+
+    st.markdown("###### ↩️ Dönüş (Sirkülasyon) Hattı")
+    return_diameter_mm = st.number_input("Dönüş Hattı İç Çapı (mm)", min_value=10.0, max_value=800.0, value=100.0, step=10.0)
+    return_wall_thickness_mm = st.number_input("Dönüş Hattı Et Kalınlığı (mm)", min_value=1.0, max_value=30.0, value=3.0, step=0.5)
+    return_mass_flow_kg_s = st.number_input("Dönüş Hattı Debisi (kg/s)", min_value=0.0, max_value=500.0, value=5.0, step=1.0)
 
 # Initialize session state for multi-component composition and multi-layer insulation
 if "custom_composition" not in st.session_state:
@@ -695,7 +723,17 @@ with tab_schematic:
 with tab_3d_terminal:
     st.markdown("##### ⚓ 3D Terminal Sahası & Boru Köprüsü Dijital İkizi (Three.js)")
     st.caption("Açık deniz LUP dolfeni, yanaşmış LNG gemisi, APD dolfenleri, 3D Omega termal genleşme döngüleri, kara tankı ve sirkülasyon pompasını 3D uzayda serbestçe gezin.")
-    html_terminal_3d = generate_terminal_3d_html(sim_results, height_px=640)
+    html_terminal_3d = generate_terminal_3d_html(
+        sim_results,
+        height_px=640,
+        main_diameter_mm=diameter_mm,
+        main_wall_mm=wall_thickness_mm,
+        return_diameter_mm=return_diameter_mm,
+        return_wall_mm=return_wall_thickness_mm,
+        main_material=pipe_mat_name,
+        return_material=pipe_mat_name,
+        return_flow_kg_s=return_mass_flow_kg_s,
+    )
     st.components.v1.html(html_terminal_3d, height=660, scrolling=False)
 
 with tab_3d_pipe:

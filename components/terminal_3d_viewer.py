@@ -5,7 +5,17 @@ from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults
 
 
-def generate_terminal_3d_html(results, height_px: int = 650) -> str:
+def generate_terminal_3d_html(
+    results,
+    height_px: int = 650,
+    main_diameter_mm: float | None = None,
+    main_wall_mm: float | None = None,
+    return_diameter_mm: float = 100.0,
+    return_wall_mm: float = 3.0,
+    main_material: str = "",
+    return_material: str = "",
+    return_flow_kg_s: float = 0.0,
+) -> str:
     """Generates a self-contained responsive Three.js 3D WebGL Digital Twin of the LNG Terminal.
 
     Visualizes:
@@ -15,7 +25,8 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
     - Omega Dolphins with 3D thermal expansion loops & TRVs
     - Onshore Cryogenic LNG Full-Containment Tank
     - P-201 Recirculation Pump and continuous cooldown return line
-    - Animated two-way cryogenic flow particles
+    - Pipe rack, long-radius elbows, manifold and temperature-gradient pipes
+    - Click-to-inspect fluid state along the pipe
     - Camera presets and interactive inspector
     """
 
@@ -26,6 +37,10 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
         psat_out = results.wall_vapor_pressure_pa[-1] / 1e5
         flashed = results.has_wall_flashed or results.has_bulk_flashed
         flash_m = results.wall_flashing_point_m or results.bulk_flashing_point_m or 0.0
+        station_t = results.bulk_temperature_k
+        station_p = results.pressure_pa
+        station_psat = results.wall_vapor_pressure_pa
+        station_margin = results.wall_flashing_margin_pa
     else:
         cfg = results.config
         t_out = results.outlet_temperature_k - 273.15
@@ -33,15 +48,58 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
         psat_out = results.outlet_vapor_pressure_pa / 1e5
         flashed = results.has_flashed
         flash_m = results.flashing_point_m or 0.0
+        station_t = results.temperature_k
+        station_p = results.pressure_pa
+        station_psat = results.vapor_pressure_pa
+        station_margin = results.flashing_margin_pa
 
     t_in = cfg.inlet_temperature_k - 273.15
     p_in = cfg.inlet_pressure_pa / 1e5
     m_flow = cfg.mass_flow_rate_kg_s
     margin_min = results.min_flashing_margin_pa / 1e5
 
+    # Decimated station profile for the temperature gradient and click inspector.
+    n_st = len(results.distance_m)
+    step = max(1, n_st // 60)
+    idx = list(range(0, n_st, step))
+    if idx[-1] != n_st - 1:
+        idx.append(n_st - 1)
+    stations = {
+        "distance_m": [round(results.distance_m[i], 1) for i in idx],
+        "temp_c": [round(station_t[i] - 273.15, 2) for i in idx],
+        "pressure_bar": [round(station_p[i] / 1e5, 3) for i in idx],
+        "vapor_bar": [round(station_psat[i] / 1e5, 3) for i in idx],
+        "margin_bar": [round(station_margin[i] / 1e5, 3) for i in idx],
+    }
+    t_min_c = min(stations["temp_c"])
+    t_max_c = max(stations["temp_c"])
+
+    main_id = main_diameter_mm if main_diameter_mm else cfg.inner_diameter_m * 1000.0
+    main_wall = main_wall_mm if main_wall_mm else 6.0
+    main_mat = main_material or "Paslanmaz Çelik"
+    ret_mat = return_material or "Paslanmaz Çelik"
+    legend_items = [
+        (f"Ana LNG Hattı (ID {main_id:.0f} mm · t {main_wall:.1f} mm)", "#00d2ff"),
+        (f"Dönüş Hattı (ID {return_diameter_mm:.0f} mm · t {return_wall_mm:.1f} mm)", "#39d353"),
+        ("BOG Gaz Geri Dönüş", "#f0883e"),
+        ("Omega Döngüsü & TRV", "#d2a8ff"),
+        ("Pipe Rack & Uzun Yarıçap Dirsek", "#8b949e"),
+    ]
+    legend_html = "".join(
+        f'<div class="legend-item"><div class="legend-swatch" style="background:{col};"></div>'
+        f'<span>{lbl}</span></div>'
+        for lbl, col in legend_items
+    )
+    legend_html += (
+        '<div class="legend-item"><div class="legend-swatch" '
+        'style="background:linear-gradient(90deg,#1f6feb,#3fb950,#f85149);"></div>'
+        f'<span>Sıcaklık gradyanı: {t_min_c:.1f} … {t_max_c:.1f} °C</span></div>'
+    )
+
     telemetry = {
         "length_m": cfg.length_m,
-        "diameter_mm": cfg.inner_diameter_m * 1000.0,
+        "diameter_mm": main_id,
+        "wall_mm": main_wall,
         "mass_flow": m_flow,
         "inlet_t_c": round(t_in, 2),
         "outlet_t_c": round(t_out, 2),
@@ -51,6 +109,12 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
         "min_margin_bar": round(margin_min, 3),
         "has_flashed": flashed,
         "flash_point_m": round(flash_m, 1),
+        "return_id_mm": return_diameter_mm,
+        "return_wall_mm": return_wall_mm,
+        "return_flow_kg_s": return_flow_kg_s,
+        "main_material": main_mat,
+        "return_material": ret_mat,
+        "stations": stations,
     }
 
     html = f"""
@@ -221,23 +285,13 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
     </div>
 
     <div class="legend-panel">
-      <div style="font-weight:700; color:#8b949e; margin-bottom:6px; text-transform:uppercase; font-size:10px;">Hat Lejantı</div>
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:#00d2ff; box-shadow:0 0 6px #00d2ff;"></div>
-        <span>Ana LNG Boşaltma (24")</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:#39d353; box-shadow:0 0 6px #39d353;"></div>
-        <span>Sirkülasyon Soğutma (8")</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:#f0883e;"></div>
-        <span>BOG Gaz Geri Dönüş</span>
-      </div>
-      <div class="legend-item">
-        <div class="legend-swatch" style="background:#d2a8ff;"></div>
-        <span>Omega Dolfeni & TRV</span>
-      </div>
+      <div style="font-weight:700; color:#8b949e; margin-bottom:6px; text-transform:uppercase; font-size:10px;">Hat Lejantı (Dinamik)</div>
+      {legend_html}
+    </div>
+
+    <div class="hud-panel" id="pick-panel" style="top:auto; bottom:70px; left:14px; display:none; min-width:250px;">
+      <div class="hud-title">🔎 Seçilen Nokta</div>
+      <div id="pick-body" style="font-size:11px; line-height:1.55;"></div>
     </div>
 
     <div class="camera-bar">
@@ -345,6 +399,38 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
     const pipeMatMain = new THREE.MeshStandardMaterial({{ color: 0x00d2ff, roughness: 0.2, metalness: 0.8, emissive: 0x004466, emissiveIntensity: 0.3 }});
     const pipeMatRecirc = new THREE.MeshStandardMaterial({{ color: 0x39d353, roughness: 0.2, metalness: 0.8, emissive: 0x005511, emissiveIntensity: 0.3 }});
     const insulationMat = new THREE.MeshStandardMaterial({{ color: 0xd0d7de, roughness: 0.5 }});
+
+    // Pipe rack under the transfer route (supports supply + return lines)
+    (function buildPipeRack() {{
+      const rackMat = new THREE.MeshStandardMaterial({{ color: 0x4b5563, roughness: 0.6, metalness: 0.5 }});
+      const rack = new THREE.Group();
+      const yTop = 12.6;
+      [-3, 3].forEach(z => {{
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(355, 0.7, 0.7), rackMat);
+        beam.position.set(52, yTop, z);
+        rack.add(beam);
+      }});
+      for (let x = -110; x <= 225; x += 20) {{
+        const cross = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 7.2), rackMat);
+        cross.position.set(x, yTop, 0);
+        rack.add(cross);
+        [-3, 3].forEach(z => {{
+          const leg = new THREE.Mesh(new THREE.BoxGeometry(0.7, yTop, 0.7), rackMat);
+          leg.position.set(x, yTop / 2, z);
+          rack.add(leg);
+        }});
+      }}
+      terminalGroup.add(rack);
+    }})();
+
+    // Manifold skid on LUP: MLAs collect here, then supply/return leave for the pipeline
+    const manifold = new THREE.Mesh(
+      new THREE.BoxGeometry(6, 3, 40),
+      new THREE.MeshStandardMaterial({{ color: 0x8b949e, roughness: 0.3, metalness: 0.85 }})
+    );
+    manifold.position.set(-132, 14, 0);
+    manifold.castShadow = true;
+    terminalGroup.add(manifold);
 
     function createDolphin(x, z, width, depth, height, pileCount = 4, name = "") {{
       const group = new THREE.Group();
@@ -528,12 +614,46 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
 
     terminalGroup.add(tankGroup);
 
-    // 6. PIPELINES: Main LNG Line (Blue) and Recirculation Line (Green)
-    // Construction of 3D Path through Omega Loops
-    function buildPipeCurve(zOffset, loopExtZ) {{
-      const D = loopExtZ; // yatay omega-döngü kenar uzaklığı (genleşme emniyeti)
+    // 6. PIPELINES: Supply at z=+3.5, return at z=-3.5; omega loops mirror so they never cross.
+    const MAIN_Z = 3.5;
+    const RET_Z = -3.5;
+    const LOOP_EXT = 22.0;
+    const mainRadius = Math.max(0.6, telemetry.diameter_mm / 210.0);
+    const retRadius = Math.max(0.4, telemetry.return_id_mm / 210.0);
+
+    // Temperature-driven 1D gradient texture (TubeGeometry uv.x runs along length).
+    function buildTempGradient(reverse) {{
+      const canvas = document.createElement('canvas');
+      canvas.width = 256; canvas.height = 1;
+      const ctx = canvas.getContext('2d');
+      const temps = telemetry.stations.temp_c;
+      const tMin = Math.min.apply(null, temps);
+      const tMax = Math.max.apply(null, temps);
+      const cold = new THREE.Color(0x1f6feb);
+      const mid = new THREE.Color(0x3fb950);
+      const hot = new THREE.Color(0xf85149);
+      for (let i = 0; i < 256; i++) {{
+        const fPos = i / 255.0;
+        const si = Math.min(temps.length - 1, Math.round(fPos * (temps.length - 1)));
+        const siRev = reverse ? (temps.length - 1 - si) : si;
+        const f = (temps[siRev] - tMin) / Math.max(tMax - tMin, 1e-6);
+        const col = f < 0.5 ? cold.clone().lerp(mid, f * 2.0) : mid.clone().lerp(hot, (f - 0.5) * 2.0);
+        ctx.fillStyle = '#' + col.getHexString();
+        ctx.fillRect(i, 0, 1, 1);
+      }}
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.ClampToEdgeWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.needsUpdate = true;
+      return tex;
+    }}
+    const tempTex = buildTempGradient(false);
+    const tempTexRet = buildTempGradient(true);
+
+    function buildPipeCurve(zOffset, loopExtZ, loopDir) {{
+      const D = loopExtZ * loopDir;
       const pts = [
-        new THREE.Vector3(-115, 14, zOffset),
+        new THREE.Vector3(-132, 14, zOffset),
         new THREE.Vector3(-20, 14, zOffset),
         // Omega Loop 1: iki paralel yateral bacak + 180° dönüş (plan görünümünde Ω)
         new THREE.Vector3(-16, 14, zOffset),
@@ -553,38 +673,106 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
       return new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.15);
     }}
 
-    const mainCurve = buildPipeCurve(0, 22);
-    const mainPipeGeo = new THREE.TubeGeometry(mainCurve, 120, 1.1, 16, false);
-    const mainPipe = new THREE.Mesh(mainPipeGeo, pipeMatMain);
+    const mainCurve = buildPipeCurve(MAIN_Z, LOOP_EXT, +1);
+    const mainPipeGeo = new THREE.TubeGeometry(mainCurve, 160, mainRadius, 18, false);
+    const mainPipeMat = new THREE.MeshStandardMaterial({{
+      map: tempTex, color: 0xffffff, roughness: 0.25, metalness: 0.65,
+      emissive: 0x001122, emissiveIntensity: 0.25
+    }});
+    const mainPipe = new THREE.Mesh(mainPipeGeo, mainPipeMat);
     mainPipe.castShadow = true;
+    mainPipe.userData.lineType = "main";
     terminalGroup.add(mainPipe);
 
-    // Tank inlet pipe extension
+    // Tank inlet extension (follows supply line z)
     const tankLeadInCurve = new THREE.CatmullRomCurve3([
-      new THREE.Vector3(220, 8, 0),
-      new THREE.Vector3(260, 18, 0),
-      new THREE.Vector3(285, 48, 0),
-      new THREE.Vector3(300, 52, 0)
+      new THREE.Vector3(220, 8, MAIN_Z),
+      new THREE.Vector3(260, 18, MAIN_Z),
+      new THREE.Vector3(285, 48, MAIN_Z),
+      new THREE.Vector3(300, 52, MAIN_Z)
     ]);
-    const tankLeadIn = new THREE.Mesh(new THREE.TubeGeometry(tankLeadInCurve, 30, 1.1, 16, false), pipeMatMain);
+    const tankLeadIn = new THREE.Mesh(new THREE.TubeGeometry(tankLeadInCurve, 30, mainRadius, 16, false), mainPipeMat);
     tankLeadIn.castShadow = true;
     terminalGroup.add(tankLeadIn);
 
-    // Recirculation Line (Green - 8" dia)
-    const recircCurve = buildPipeCurve(-4, 18);
-    const recircPipeGeo = new THREE.TubeGeometry(recircCurve, 120, 0.65, 12, false);
-    const recircPipe = new THREE.Mesh(recircPipeGeo, pipeMatRecirc);
+    // Return / recirculation line (mirrored loops, z=-3.5)
+    const recircCurve = buildPipeCurve(RET_Z, LOOP_EXT - 4.0, -1);
+    const recircPipeGeo = new THREE.TubeGeometry(recircCurve, 160, retRadius, 14, false);
+    const recircPipeMat = new THREE.MeshStandardMaterial({{
+      map: tempTexRet, color: 0x9be9a8, roughness: 0.3, metalness: 0.6,
+      emissive: 0x002200, emissiveIntensity: 0.25
+    }});
+    const recircPipe = new THREE.Mesh(recircPipeGeo, recircPipeMat);
     recircPipe.castShadow = true;
+    recircPipe.userData.lineType = "return";
     terminalGroup.add(recircPipe);
 
-    // Connect pump P-201 to recirc line
+    // Connect pump P-201 to the return line
     const pumpConnectCurve = new THREE.CatmullRomCurve3([
       new THREE.Vector3(230, 4, -18),
-      new THREE.Vector3(230, 8, -4),
-      new THREE.Vector3(220, 8, -4)
+      new THREE.Vector3(230, 8, RET_Z - 4),
+      new THREE.Vector3(220, 8, RET_Z)
     ]);
-    const pumpConnect = new THREE.Mesh(new THREE.TubeGeometry(pumpConnectCurve, 16, 0.65, 12, false), pipeMatRecirc);
+    const pumpConnect = new THREE.Mesh(new THREE.TubeGeometry(pumpConnectCurve, 16, retRadius, 12, false), recircPipeMat);
     terminalGroup.add(pumpConnect);
+
+    // Integrity self-check: supply and return centerlines must not interpenetrate.
+    (function checkNonOverlap() {{
+      const n = 60;
+      let minDist = Infinity;
+      for (let i = 0; i <= n; i++) {{
+        const p = mainCurve.getPoint(i / n);
+        for (let j = 0; j <= n; j++) {{
+          minDist = Math.min(minDist, p.distanceTo(recircCurve.getPoint(j / n)));
+        }}
+      }}
+      if (minDist < mainRadius + retRadius) {{
+        console.warn('Pipe overlap risk: min centerline distance', minDist.toFixed(2));
+      }}
+      telemetry.min_centerline_clearance = Number(minDist.toFixed(2));
+    }})();
+
+    // Long-radius elbow collars at the omega-loop corners (no miter joints)
+    const retLoopTop = RET_Z - (LOOP_EXT - 4.0);
+    const mainLoopTop = MAIN_Z + LOOP_EXT;
+    const elbowCols = [
+      [-16, MAIN_Z], [-16, mainLoopTop], [6, mainLoopTop], [6, MAIN_Z],
+      [84, MAIN_Z], [84, mainLoopTop], [106, mainLoopTop], [106, MAIN_Z],
+      [-16, RET_Z], [-16, retLoopTop], [6, retLoopTop], [6, RET_Z],
+      [84, RET_Z], [84, retLoopTop], [106, retLoopTop], [106, RET_Z]
+    ];
+    const elbowMat = new THREE.MeshStandardMaterial({{ color: 0xaab4c0, roughness: 0.35, metalness: 0.7 }});
+    elbowCols.forEach(([ex, ez]) => {{
+      const elbow = new THREE.Mesh(new THREE.TorusGeometry(1.4, 0.3, 8, 20), elbowMat);
+      elbow.position.set(ex, 14, ez);
+      elbow.rotation.x = Math.PI / 2;
+      terminalGroup.add(elbow);
+    }});
+
+    // Click-to-inspect fluid state at any point on the supply/return pipe
+    const raycaster = new THREE.Raycaster();
+    const pointer = new THREE.Vector2();
+    const stations = telemetry.stations;
+    renderer.domElement.addEventListener('click', (event) => {{
+      const rect = renderer.domElement.getBoundingClientRect();
+      pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1;
+      pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1;
+      raycaster.setFromCamera(pointer, camera);
+      const hits = raycaster.intersectObjects([mainPipe, recircPipe], false);
+      if (hits.length === 0) return;
+      const hit = hits[0];
+      const frac = hit.uv ? Math.min(1, Math.max(0, hit.uv.x)) : 0.5;
+      const idx = Math.round(frac * (stations.distance_m.length - 1));
+      const lineLabel = hit.object.userData.lineType === "return" ? "Dönüş Hattı" : "Ana LNG Hattı";
+      document.getElementById('pick-body').innerHTML =
+        '<div class="hud-row"><span>Hat:</span><span class="hud-val">' + lineLabel + '</span></div>' +
+        '<div class="hud-row"><span>Mesafe:</span><span class="hud-val">' + stations.distance_m[idx].toFixed(1) + ' m</span></div>' +
+        '<div class="hud-row"><span>Sıcaklık:</span><span class="hud-val">' + stations.temp_c[idx].toFixed(2) + ' °C</span></div>' +
+        '<div class="hud-row"><span>Basınç:</span><span class="hud-val">' + stations.pressure_bar[idx].toFixed(3) + ' bar</span></div>' +
+        '<div class="hud-row"><span>Psat:</span><span class="hud-val">' + stations.vapor_bar[idx].toFixed(3) + ' bar</span></div>' +
+        '<div class="hud-row"><span>Marj:</span><span class="hud-val">' + stations.margin_bar[idx].toFixed(3) + ' bar</span></div>';
+      document.getElementById('pick-panel').style.display = 'block';
+    }});
 
     // Thermal Relief Valves (TRV) skids on Omega Dolphins
     function createTRVSkid(x, z) {{
@@ -627,7 +815,7 @@ def generate_terminal_3d_html(results, height_px: int = 650) -> str:
     const views = {{
       overview: {{ cam: new THREE.Vector3(-180, 110, 240), tgt: new THREE.Vector3(60, 10, 0) }},
       lup: {{ cam: new THREE.Vector3(-150, 40, 70), tgt: new THREE.Vector3(-120, 15, 0) }},
-      omega: {{ cam: new THREE.Vector3(0, 50, 100), tgt: new THREE.Vector3(0, 15, 25) }},
+      omega: {{ cam: new THREE.Vector3(45, 120, 120), tgt: new THREE.Vector3(45, 12, 0) }},
       tank: {{ cam: new THREE.Vector3(240, 70, 160), tgt: new THREE.Vector3(300, 30, 0) }}
     }};
 

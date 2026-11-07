@@ -32,3 +32,24 @@ def test_terminal_3d_html_generation(sample_simulation_results):
     assert "lup" in html.lower()
     assert "omega" in html.lower()
     assert "tank" in html.lower()
+
+
+def test_terminal_3d_has_rack_manifold_gradient_and_inspector(sample_simulation_results):
+    html = generate_terminal_3d_html(
+        sample_simulation_results,
+        main_diameter_mm=219.1,
+        main_wall_mm=8.18,
+        return_diameter_mm=114.3,
+        return_wall_mm=6.02,
+    )
+    lowered = html.lower()
+    assert "pipe rack" in lowered
+    assert "manifold" in lowered
+    assert "buildtempgradient" in lowered
+    assert "raycaster" in lowered
+    assert "pick-panel" in lowered
+    assert "dinamik" in lowered
+    # Supply and return are separated and mirrored.
+    assert "main_z" in lowered
+    assert "ret_z" in lowered
+    assert "min_centerline_clearance" in lowered
