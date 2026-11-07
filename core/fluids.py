@@ -96,6 +96,7 @@ class FluidManager:
         self.normalized_composition: Dict[str, float] = {}
         self._backend_string = self._build_backend_string()
         self._cache: Dict[tuple, FluidProperties] = {}
+        self._psat_cache: Dict[float, float] = {}
 
     def _build_backend_string(self) -> str:
         total = sum(self.composition.values())
@@ -152,16 +153,21 @@ class FluidManager:
         """Calculate saturation vapor pressure Psat(T) in Pa."""
         # Clamp temperature to valid range
         T_clamped = max(91.0, min(T, 190.0))
+        cache_key = round(T_clamped, 2)
+        if cache_key in self._psat_cache:
+            return self._psat_cache[cache_key]
         try:
             if "HEOS::" in self._backend_string:
                 # Bubble point pressure for mixture
                 p_b = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, self._backend_string))
                 if math.isfinite(p_b) and 1000.0 < p_b < 1.5e7:
+                    self._psat_cache[cache_key] = p_b
                     return p_b
                 raise ValueError("Invalid mixture Psat from CoolProp")
             else:
                 p_m = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, "Methane"))
                 if math.isfinite(p_m) and p_m > 0.0:
+                    self._psat_cache[cache_key] = p_m
                     return p_m
                 raise ValueError("Invalid Methane Psat")
         except Exception:
@@ -170,6 +176,7 @@ class FluidManager:
             Pc = 4599200.0  # Pa
             tau = 1.0 - (T_clamped / Tc)
             if tau <= 0:
+                self._psat_cache[cache_key] = Pc
                 return Pc
             a1, a2, a3, a4 = -6.02242, 1.26652, -0.5707, -1.366
             ln_p_pc = (Tc / T_clamped) * (a1 * tau + a2 * (tau**1.5) + a3 * (tau**3) + a4 * (tau**6))
@@ -182,6 +189,7 @@ class FluidManager:
                     if entry is not None:
                         vol_shift += frac * float(entry["volatility_factor"])
                 p_sat *= max(0.15, 1.0 + vol_shift)
+            self._psat_cache[cache_key] = p_sat
             return p_sat
 
     def _evaluate_liquid_mixture_abstract_state(self, T_val: float, P_val: float) -> Optional[tuple[float, float, float, float, float]]:
