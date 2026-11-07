@@ -423,7 +423,7 @@ def run_simulation(
         inner_diameter_m=diam / 1000.0,
         roughness_m=rough * 1e-6,
         inclination_deg=incline,
-        inlet_temperature_k=t_in_c + 273.15,
+        inlet_temperature_k=inlet_t_c + 273.15,
         inlet_pressure_pa=p_in_bar * 1e5,
         mass_flow_rate_kg_s=flow,
         num_cells=nz
