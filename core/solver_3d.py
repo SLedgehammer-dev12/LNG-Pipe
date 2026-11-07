@@ -253,7 +253,7 @@ class PipelineSolver3D:
                 except Exception:
                     # Fallback to ideal-gas estimate if CoolProp fails
                     rho_v = max(0.1, 0.01604 * curr_p / (8.314 * max(t_wall, 100.0)))
-                alpha, phi_l_sq, _ = calculate_two_phase_flashing(
+                alpha, phi_l_sq, two_phase_rho = calculate_two_phase_flashing(
                     vapor_quality=vapor_quality,
                     liquid_density=props_bulk.density,
                     vapor_density=rho_v,
@@ -301,10 +301,12 @@ class PipelineSolver3D:
                     temp_field[k_idx + 1, :, j] = solve_tdma(a_mat, b_mat, c_mat, rhs)
 
                 # Hydraulic pressure drop update
-                re_local = (props.density * v_mean * pipe_cfg.inner_diameter_m) / props.viscosity
+                flow_density = props.density if alpha <= 1e-5 else two_phase_rho
+                v_mean_local = pipe_cfg.mass_flow_rate_kg_s / (flow_density * pipe_area)
+                re_local = (flow_density * v_mean_local * pipe_cfg.inner_diameter_m) / props.viscosity
                 f_local = calculate_churchill_friction_factor(re_local, rel_roughness)
-                dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * props.density * (v_mean ** 2)) * phi_l_sq
-                dp_hydro = props.density * g * sin_incline * dz
+                dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * flow_density * (v_mean_local ** 2)) * phi_l_sq
+                dp_hydro = flow_density * g * sin_incline * dz
                 curr_p = max(P_TRIPLE_PA, curr_p - dp_fric - dp_hydro)
 
         results.temp_field_k = temp_field
