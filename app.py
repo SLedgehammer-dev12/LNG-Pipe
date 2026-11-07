@@ -3,6 +3,7 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
+import json
 
 from core.fluids import FluidManager
 from core.heat_transfer import InsulationLayer, PipeThermalModel
@@ -914,6 +915,46 @@ with tab_table:
         data=csv_bytes,
         file_name=f"lng_pipeline_results_{int(length_m)}m_{'3d' if is_3d_mode else '1d'}.csv",
         mime="text/csv"
+    )
+
+    # JSON dışa aktarma - tüm sonuçları yapılandırılmış biçimde
+    json_export = {
+        "project": {
+            "name": proj_name_input if 'proj_name_input' in dir() else "LNG Pipeline Study",
+            "tag_id": tag_id_input if 'tag_id_input' in dir() else "LNG-PL-001",
+            "date": report_date if 'report_date' in dir() else "2026-11-06"
+        },
+        "simulation": {
+            "mode": "3D" if is_3d_mode else "1D",
+            "length_m": length_m,
+            "diameter_mm": diameter_mm,
+            "wall_thickness_mm": wall_thickness_mm,
+            "inlet_temperature_c": round(inlet_t_c, 2),
+            "inlet_pressure_bar": round(inlet_p_bar, 3),
+            "mass_flow_kg_s": mass_flow_kg_s,
+            "ambient_temperature_c": amb_temp_c,
+            "wind_speed_m_s": wind_speed_m_s,
+            "fluid": "pure_methane" if is_pure_methane else "mixture",
+            "composition": active_composition
+        },
+        "results": {
+            "outlet_temperature_c": round(outlet_t_d, 2),
+            "outlet_pressure_bar": round(outlet_p_d, 3),
+            "outlet_psat_bar": round(outlet_psat_d, 3),
+            "pressure_drop_bar": round(delta_p_d, 3),
+            "min_flashing_margin_bar": round(min_margin_d, 3),
+            "total_heat_ingress_kw": heat_kw,
+            "has_flashed": has_flashed,
+            "flashing_point_m": sim_results.flashing_point_m if hasattr(sim_results, 'flashing_point_m') else (sim_results.wall_flashing_point_m if hasattr(sim_results, 'wall_flashing_point_m') else None)
+        },
+        "cells": df_data
+    }
+    json_bytes = json.dumps(json_export, indent=2, ensure_ascii=False).encode('utf-8')
+    st.download_button(
+        label="📥 Sonuçları JSON Olarak İndir",
+        data=json_bytes,
+        file_name=f"lng_pipeline_results_{int(length_m)}m_{'3d' if is_3d_mode else '1d'}.json",
+        mime="application/json"
     )
 
 with tab_report:
