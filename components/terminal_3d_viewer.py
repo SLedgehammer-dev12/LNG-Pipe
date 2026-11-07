@@ -135,6 +135,7 @@ def generate_terminal_3d_html(
         "length_m": route_length,
         "anchor_dist_m": anchor_dist_m,
         "omega_count": omega_count,
+        "length_scale": round(max(0.5, min(2.5, route_length / 300.0)), 3),
         "diameter_mm": main_id,
         "wall_mm": main_wall,
         "mass_flow": m_flow,
@@ -351,7 +352,7 @@ def generate_terminal_3d_html(
     const container = document.getElementById('canvas-container');
     const scene = new THREE.Scene();
     scene.background = new THREE.Color(0x0a0f18);
-    scene.fog = new THREE.FogExp2(0x0a0f18, 0.0018);
+    scene.fog = new THREE.FogExp2(0x0a0f18, 0.0007);
 
     const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.5, 3000);
     camera.position.set(-180, 110, 240);
@@ -381,7 +382,7 @@ def generate_terminal_3d_html(
     sunLight.shadow.mapSize.height = 2048;
     sunLight.shadow.camera.near = 10;
     sunLight.shadow.camera.far = 800;
-    const d = 250;
+    const d = 450;
     sunLight.shadow.camera.left = -d;
     sunLight.shadow.camera.right = d;
     sunLight.shadow.camera.top = d;
@@ -392,8 +393,39 @@ def generate_terminal_3d_html(
     blueFill.position.set(150, 80, -100);
     scene.add(blueFill);
 
+    // Dynamic terminal footprint: ship-to-tank distance follows the user line length.
+    const lengthScale = Math.max(0.5, Math.min(2.5, telemetry.length_scale || 1.0));
+    const ROUTE_START = -132.0;
+    const ROUTE_END = ROUTE_START + 352.0 * lengthScale;
+    const TANK_X = ROUTE_END + 80.0;
+    const PUMP_X = ROUTE_END + 10.0;
+    const SEAWALL_X = 155.0 + (ROUTE_END - 220.0);
+    const LAND_X = TANK_X + 80.0;
+    const MAIN_Z = 3.5;
+    const RET_Z = -3.5;
+    const LOOP_EXT = 22.0;
+    const OMEGA_W = 22.0;
+    const mainRadius = Math.min(3.0, Math.max(0.6, telemetry.diameter_mm / 210.0));
+    const retRadius = Math.min(1.8, Math.max(0.4, telemetry.return_id_mm / 210.0));
+    const parallelOffset = -Math.max(7.0, mainRadius + retRadius + 3.0);
+    const nOmega = Math.max(1, Math.min(8, telemetry.omega_count || 2));
+    const omegaSlot = (ROUTE_END - ROUTE_START) / nOmega;
+    const omegaCenters = [];
+    const omegaStarts = [];
+    for (let k = 0; k < nOmega; k++) {{
+      const x0 = ROUTE_START + omegaSlot * k + (omegaSlot - OMEGA_W) / 2;
+      omegaStarts.push(x0);
+      omegaCenters.push(x0 + OMEGA_W / 2);
+    }}
+    const SCENE_CX = (TANK_X - 150.0) / 2.0;
+    const SCENE_SPAN = (TANK_X + 60.0) - (-180.0);
+    const OVERVIEW_DIST = Math.max(650.0, SCENE_SPAN * 1.1);
+    camera.position.set(SCENE_CX, OVERVIEW_DIST * 0.35, OVERVIEW_DIST * 0.75);
+    controls.target.set(SCENE_CX, 10, 0);
+    controls.update();
+
     // Sea Surface
-    const waterGeo = new THREE.PlaneGeometry(1600, 1600, 64, 64);
+    const waterGeo = new THREE.PlaneGeometry(4200, 1600, 64, 64);
     const waterMat = new THREE.MeshStandardMaterial({{
       color: 0x061e38,
       roughness: 0.15,
@@ -404,7 +436,7 @@ def generate_terminal_3d_html(
     }});
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMesh.rotation.x = -Math.PI / 2;
-    waterMesh.position.y = 0;
+    waterMesh.position.set(ROUTE_END * 0.5, 0, 0);
     waterMesh.receiveShadow = true;
     scene.add(waterMesh);
 
@@ -416,7 +448,7 @@ def generate_terminal_3d_html(
       metalness: 0.1
     }});
     const landMesh = new THREE.Mesh(landGeo, landMat);
-    landMesh.position.set(380, -10, 0);
+    landMesh.position.set(LAND_X, -10, 0);
     landMesh.receiveShadow = true;
     scene.add(landMesh);
 
@@ -424,7 +456,7 @@ def generate_terminal_3d_html(
     const seawallGeo = new THREE.BoxGeometry(10, 12, 800);
     const seawallMat = new THREE.MeshStandardMaterial({{ color: 0x484f58, roughness: 0.7 }});
     const seawall = new THREE.Mesh(seawallGeo, seawallMat);
-    seawall.position.set(155, 4, 0);
+    seawall.position.set(SEAWALL_X, 4, 0);
     seawall.castShadow = true;
     seawall.receiveShadow = true;
     scene.add(seawall);
@@ -447,12 +479,14 @@ def generate_terminal_3d_html(
       const rackMat = new THREE.MeshStandardMaterial({{ color: 0x4b5563, roughness: 0.6, metalness: 0.5 }});
       const rack = new THREE.Group();
       const yTop = 12.6;
+      const rackLength = ROUTE_END - ROUTE_START + 20;
+      const rackCenter = (ROUTE_START + ROUTE_END) / 2;
       [-3, 3].forEach(z => {{
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(355, 0.7, 0.7), rackMat);
-        beam.position.set(52, yTop, z);
+        const beam = new THREE.Mesh(new THREE.BoxGeometry(rackLength, 0.7, 0.7), rackMat);
+        beam.position.set(rackCenter, yTop, z);
         rack.add(beam);
       }});
-      for (let x = -110; x <= 225; x += 20) {{
+      for (let x = ROUTE_START + 10; x <= ROUTE_END; x += 20) {{
         const cross = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.6, 7.2), rackMat);
         cross.position.set(x, yTop, 0);
         rack.add(cross);
@@ -473,6 +507,53 @@ def generate_terminal_3d_html(
     manifold.position.set(-132, 14, 0);
     manifold.castShadow = true;
     terminalGroup.add(manifold);
+
+    // Catwalk: personnel access from the LUP along the pipe rack to the onshore area
+    (function buildCatwalk() {{
+      const cwMat = new THREE.MeshStandardMaterial({{ color: 0x3a4149, roughness: 0.7, metalness: 0.4 }});
+      const railMat = new THREE.MeshStandardMaterial({{ color: 0xd29922, roughness: 0.5 }});
+      const cwZ = -11.0;
+      const cwY = 10.4;
+      const cwWidth = 3.4;
+      const x0 = -120, x1 = ROUTE_END;
+      const len = x1 - x0;
+      const cx = (x0 + x1) / 2;
+      const deck = new THREE.Mesh(new THREE.BoxGeometry(len, 0.25, cwWidth), cwMat);
+      deck.position.set(cx, cwY, cwZ);
+      deck.receiveShadow = true;
+      terminalGroup.add(deck);
+      [-cwWidth / 2, cwWidth / 2].forEach(dz => {{
+        const rail = new THREE.Mesh(new THREE.BoxGeometry(len, 1.1, 0.12), railMat);
+        rail.position.set(cx, cwY + 0.7, cwZ + dz);
+        terminalGroup.add(rail);
+      }});
+      for (let x = x0 + 10; x <= x1; x += 20) {{
+        const leg = new THREE.Mesh(new THREE.BoxGeometry(0.35, cwY, 0.35), cwMat);
+        leg.position.set(x, cwY / 2, cwZ);
+        terminalGroup.add(leg);
+      }}
+    }})();
+
+    // Onshore vehicle access road from the land to the seawall
+    (function buildAccessRoad() {{
+      const roadMat = new THREE.MeshStandardMaterial({{ color: 0x262b31, roughness: 0.95 }});
+      const roadY = 5.2;
+      const roadZ = 80.0;
+      const roadWidth = 12.0;
+      const roadStart = SEAWALL_X;
+      const roadEnd = LAND_X + 180.0;
+      const roadLen = roadEnd - roadStart;
+      const road = new THREE.Mesh(new THREE.BoxGeometry(roadLen, 0.2, roadWidth), roadMat);
+      road.position.set((roadStart + roadEnd) / 2, roadY, roadZ);
+      road.receiveShadow = true;
+      terminalGroup.add(road);
+      const dashMat = new THREE.MeshBasicMaterial({{ color: 0xd0d7de }});
+      for (let x = roadStart + 6; x < roadEnd; x += 12) {{
+        const dash = new THREE.Mesh(new THREE.BoxGeometry(5, 0.05, 0.25), dashMat);
+        dash.position.set(x, roadY + 0.12, roadZ);
+        terminalGroup.add(dash);
+      }}
+    }})();
 
     function createDolphin(x, z, width, depth, height, pileCount = 4, name = "") {{
       const group = new THREE.Group();
@@ -599,28 +680,11 @@ def generate_terminal_3d_html(
 
     terminalGroup.add(shipGroup);
 
-    // Omega layout: count and placement driven by the user-entered line length.
-    const MAIN_Z = 3.5;
-    const RET_Z = -3.5;
-    const LOOP_EXT = 22.0;
-    const OMEGA_W = 22.0;
-    const ROUTE_START = -132.0;
-    const ROUTE_END = 220.0;
-    const mainRadius = Math.min(3.0, Math.max(0.6, telemetry.diameter_mm / 210.0));
-    const retRadius = Math.min(1.8, Math.max(0.4, telemetry.return_id_mm / 210.0));
-    const parallelOffset = -Math.max(7.0, mainRadius + retRadius + 3.0);
-    const nOmega = Math.max(1, Math.min(8, telemetry.omega_count || 2));
-    const omegaSlot = (ROUTE_END - ROUTE_START) / nOmega;
-    const omegaCenters = [];
-    const omegaStarts = [];
-    for (let k = 0; k < nOmega; k++) {{
-      const x0 = ROUTE_START + omegaSlot * k + (omegaSlot - OMEGA_W) / 2;
-      omegaStarts.push(x0);
-      omegaCenters.push(x0 + OMEGA_W / 2);
+    // 3. APD Dolphins & Trestle Piles along route (distributed over the dynamic span)
+    const apdPositions = [];
+    for (let k = 1; k <= 5; k++) {{
+      apdPositions.push(ROUTE_START + (ROUTE_END - ROUTE_START) * k / 6);
     }}
-
-    // 3. APD Dolphins & Trestle Piles along route
-    const apdPositions = [-75, -30, 20, 70, 115];
     apdPositions.forEach((x, idx) => {{
       createDolphin(x, 0, 12, 14, 11, 4, `APD-${{idx + 1}}`);
     }});
@@ -639,7 +703,7 @@ def generate_terminal_3d_html(
       new THREE.CylinderGeometry(48, 48, 54, 48),
       new THREE.MeshStandardMaterial({{ color: 0x8c959f, roughness: 0.85 }})
     );
-    tankWall.position.set(300, 27, 0);
+    tankWall.position.set(TANK_X, 27, 0);
     tankWall.castShadow = true;
     tankWall.receiveShadow = true;
     tankGroup.add(tankWall);
@@ -649,7 +713,7 @@ def generate_terminal_3d_html(
       new THREE.SphereGeometry(50, 48, 24, 0, Math.PI * 2, 0, Math.PI * 0.28),
       new THREE.MeshStandardMaterial({{ color: 0xd0d7de, roughness: 0.5 }})
     );
-    roof.position.set(300, 36, 0);
+    roof.position.set(TANK_X, 36, 0);
     roof.castShadow = true;
     tankGroup.add(roof);
 
@@ -657,21 +721,21 @@ def generate_terminal_3d_html(
     const bundGeo = new THREE.CylinderGeometry(68, 68, 8, 36, 1, true);
     const bundMat = new THREE.MeshStandardMaterial({{ color: 0x57606a, side: THREE.DoubleSide }});
     const bund = new THREE.Mesh(bundGeo, bundMat);
-    bund.position.set(300, 4, 0);
+    bund.position.set(TANK_X, 4, 0);
     bund.castShadow = true;
     tankGroup.add(bund);
 
     // Recirculation Pump P-201 Station
     const pumpGeo = new THREE.CylinderGeometry(2, 2.5, 4, 16);
     const pumpMesh = new THREE.Mesh(pumpGeo, new THREE.MeshStandardMaterial({{ color: 0x2ea043, roughness: 0.3 }}));
-    pumpMesh.position.set(230, 4, -18);
+    pumpMesh.position.set(PUMP_X, 4, -18);
     pumpMesh.castShadow = true;
     tankGroup.add(pumpMesh);
 
     // Pump motor
     const motorGeo = new THREE.CylinderGeometry(1.5, 1.5, 3.5, 16);
     const motorMesh = new THREE.Mesh(motorGeo, steelMat);
-    motorMesh.position.set(230, 7.5, -18);
+    motorMesh.position.set(PUMP_X, 7.5, -18);
     motorMesh.castShadow = true;
     tankGroup.add(motorMesh);
 
@@ -787,10 +851,10 @@ def generate_terminal_3d_html(
 
     // Tank inlet extension (follows supply line z)
     const tankLeadInCurve = buildRoundedPath([
-      new THREE.Vector3(220, 8, MAIN_Z),
-      new THREE.Vector3(260, 18, MAIN_Z),
-      new THREE.Vector3(285, 48, MAIN_Z),
-      new THREE.Vector3(300, 52, MAIN_Z)
+      new THREE.Vector3(ROUTE_END, 8, MAIN_Z),
+      new THREE.Vector3(ROUTE_END + (TANK_X - ROUTE_END) * 0.4, 18, MAIN_Z),
+      new THREE.Vector3(ROUTE_END + (TANK_X - ROUTE_END) * 0.8, 48, MAIN_Z),
+      new THREE.Vector3(TANK_X, 52, MAIN_Z)
     ], 3.0);
     const tankLeadIn = new THREE.Mesh(new THREE.TubeGeometry(tankLeadInCurve, 30, mainRadius, 16, false), mainPipeMat);
     tankLeadIn.castShadow = true;
@@ -812,9 +876,9 @@ def generate_terminal_3d_html(
     // Connect pump P-201 to the actual return-route end (parallel offset).
     const returnEndZ = returnPts[returnPts.length - 1].z;
     const pumpConnectCurve = buildRoundedPath([
-      new THREE.Vector3(230, 4, -18),
-      new THREE.Vector3(230, 8, returnEndZ - 4),
-      new THREE.Vector3(220, 8, returnEndZ)
+      new THREE.Vector3(PUMP_X, 4, -18),
+      new THREE.Vector3(PUMP_X, 8, returnEndZ - 4),
+      new THREE.Vector3(ROUTE_END, 8, returnEndZ)
     ], 2.0);
     const pumpConnect = new THREE.Mesh(new THREE.TubeGeometry(pumpConnectCurve, 16, retRadius, 12, false), recircPipeMat);
     terminalGroup.add(pumpConnect);
@@ -901,10 +965,10 @@ def generate_terminal_3d_html(
 
     // Camera preset positions
     const views = {{
-      overview: {{ cam: new THREE.Vector3(-180, 110, 240), tgt: new THREE.Vector3(60, 10, 0) }},
+      overview: {{ cam: new THREE.Vector3(SCENE_CX, OVERVIEW_DIST * 0.35, OVERVIEW_DIST * 0.75), tgt: new THREE.Vector3(SCENE_CX, 10, 0) }},
       lup: {{ cam: new THREE.Vector3(-150, 40, 70), tgt: new THREE.Vector3(-120, 15, 0) }},
-      omega: {{ cam: new THREE.Vector3(44, 130, 130), tgt: new THREE.Vector3(44, 12, 11) }},
-      tank: {{ cam: new THREE.Vector3(240, 70, 160), tgt: new THREE.Vector3(300, 30, 0) }}
+      omega: {{ cam: new THREE.Vector3(ROUTE_END * 0.5, 160, 140), tgt: new THREE.Vector3(ROUTE_END * 0.5, 12, 11) }},
+      tank: {{ cam: new THREE.Vector3(TANK_X - 70, 90, 180), tgt: new THREE.Vector3(TANK_X, 30, 0) }}
     }};
 
     let targetCamPos = camera.position.clone();

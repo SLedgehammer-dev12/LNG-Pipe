@@ -91,3 +91,14 @@ def test_short_and_long_line_omega_counts(sample_simulation_results):
     long = generate_schematic_2d_html(sample_simulation_results, length_m=3000.0, anchor_dist_m=180.0)
     assert "OMEGA-8 DOLFENİ" in long
     assert "OMEGA-9 DOLFENİ" not in long
+
+
+def test_terminal_3d_scales_footprint_and_has_access_routes(sample_simulation_results):
+    short = generate_terminal_3d_html(sample_simulation_results, length_m=300.0)
+    long = generate_terminal_3d_html(sample_simulation_results, length_m=800.0)
+    lowered = short.lower()
+    assert "buildcatwalk" in lowered
+    assert "buildaccessroad" in lowered
+    assert "length_scale" in short
+    assert '"length_scale": 1.0' in short
+    assert '"length_scale": 2.5' in long
