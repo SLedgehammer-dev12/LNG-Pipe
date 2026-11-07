@@ -5,7 +5,12 @@ import pandas as pd
 import numpy as np
 import json
 
-from core.fluids import FluidManager
+from core.fluids import (
+    FluidManager,
+    AVAILABLE_LNG_COMPONENTS,
+    COMPONENT_LABELS,
+    LNG_COMPONENTS_CATALOG,
+)
 from core.heat_transfer import InsulationLayer, PipeThermalModel
 from core.solver import PipelineSolver, PipelineSimulationConfig, PipelineSimulationResults
 from core.solver_3d import PipelineSolver3D, Solver3DConfig, Simulation3DResults
@@ -25,8 +30,16 @@ from core.mechanics import (
     calculate_joukowsky_surge,
     spec_from_material,
 )
-from core.pipe_schedule import PIPE_TABLE_GROUPS, inner_diameter_mm
-from core.units import DEFAULT_UNITS, units_for, to_si, from_si, delta_from_si
+from core.pipe_schedule import PIPE_TABLE_GROUPS, inner_diameter_mm, get_wall_thickness_options
+from core.units import (
+    DEFAULT_UNITS,
+    units_for,
+    to_si,
+    from_si,
+    delta_from_si,
+    unit_display_label,
+    delta_unit_display_label,
+)
 from reports.pdf_report import generate_pdf_report
 
 st.set_page_config(
@@ -99,6 +112,15 @@ st.markdown("""
         font-weight: 600;
         margin-bottom: 15px;
     }
+    /* Sidebar input & unit selector horizontal baseline alignment */
+    section[data-testid="stSidebar"] div[data-testid="stHorizontalBlock"] {
+        align-items: flex-end !important;
+        gap: 6px !important;
+    }
+    section[data-testid="stSidebar"] .stNumberInput,
+    section[data-testid="stSidebar"] .stSelectbox {
+        margin-bottom: 2px !important;
+    }
 </style>
 """, unsafe_allow_html=True)
 
@@ -165,27 +187,22 @@ MULTI_LAYER_PACKAGES = {
     ]
 }
 
-AVAILABLE_LNG_COMPONENTS = [
-    "Methane", "Ethane", "Propane", "IsoButane", "Butane", "IsoPentane", "Pentane", "Nitrogen", "CarbonDioxide"
-]
-
-COMPONENT_LABELS = {
-    "Methane": "Metan (CH4)",
-    "Ethane": "Etan (C2H6)",
-    "Propane": "Propan (C3H8)",
-    "IsoButane": "İzo-Bütan (i-C4H10)",
-    "Butane": "Normal Bütan (n-C4H10)",
-    "IsoPentane": "İzo-Pentan (i-C5H12)",
-    "Pentane": "Normal Pentan (n-C5H12)",
-    "Nitrogen": "Azot (N2)",
-    "CarbonDioxide": "Karbondioksit (CO2)"
-}
-
 LNG_PRESET_COMPOSITIONS = {
     "Saf Metan (%100 CH4)": {"Methane": 100.0},
     "Standart Ticari LNG (Katar/Cezayir)": {"Methane": 94.2, "Ethane": 4.5, "Propane": 0.8, "Nitrogen": 0.5},
-    "Zenginleştirilmiş Ağır LNG (Avustralya/Gorgon)": {"Methane": 88.5, "Ethane": 8.2, "Propane": 2.3, "IsoButane": 0.4, "Butane": 0.3, "Nitrogen": 0.3},
+    "Zenginleştirilmiş Ağır LNG (Avustralya/Gorgon - C1–C6+)": {
+        "Methane": 88.5, "Ethane": 7.8, "Propane": 2.2, "IsoButane": 0.5,
+        "n-Butane": 0.4, "Isopentane": 0.15, "n-Pentane": 0.10, "n-Hexane": 0.05, "Nitrogen": 0.3
+    },
+    "Kuzey Afrika / Libya Ağır LNG (Yüksek C2–C6+ & N2)": {
+        "Methane": 83.2, "Ethane": 11.4, "Propane": 3.2, "IsoButane": 0.6,
+        "n-Butane": 0.7, "Isopentane": 0.2, "n-Hexane": 0.1, "Nitrogen": 0.6
+    },
     "Yalın Amerikan LNG (Sabine Pass / Henry Hub)": {"Methane": 97.8, "Ethane": 1.8, "Propane": 0.1, "Nitrogen": 0.3},
+    "Asit / İnert Gaz İçeren Ham Besleme LNG (CO2 + N2 + Ağır HC)": {
+        "Methane": 91.5, "Ethane": 5.0, "Propane": 1.5, "n-Butane": 0.5,
+        "Nitrogen": 1.2, "CarbonDioxide": 0.25, "Helium": 0.05
+    },
     "Özel Kullanıcı Tanımlı Kompozisyon": None
 }
 
@@ -219,14 +236,15 @@ preset_token = st.session_state.get("_preset_token", 0)
 
 
 def unit_input(label, category, key, default_si, min_si=None, max_si=None, step_si=None):
-    """Number input with an adjacent unit dropdown; stores the SI value in session_state."""
-    c_val, c_unit = st.columns([3, 1])
+    """Number input with a baseline-aligned adjacent unit dropdown; stores the SI value in session_state."""
+    c_val, c_unit = st.columns([2.25, 1.25], vertical_alignment="bottom")
     unit_options = units_for(category)
     with c_unit:
         unit = st.selectbox(
             f"{label} birimi",
             unit_options,
             index=unit_options.index(DEFAULT_UNITS[category]),
+            format_func=lambda u, cat=category: unit_display_label(cat, u),
             key=f"unit_{key}",
             label_visibility="collapsed",
         )
@@ -257,6 +275,7 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
         min_si=5.0, max_si=10000.0, step_si=25.0,
     )
 
+    st.markdown("###### 🚢➡️🏭 Gemiden Karaya Ana Boşaltım Hattı")
     geom_mode = st.radio(
         "Boru Boyutlandırma Yöntemi",
         ["ASME Tablosu", "Manuel Giriş"],
@@ -265,16 +284,25 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
         key=f"geom_{preset_token}",
     )
     if geom_mode == "ASME Tablosu":
-        geom_group = st.selectbox("Boru Standardı", list(PIPE_TABLE_GROUPS.keys()), index=1)
+        geom_group = st.selectbox("Boru Standardı", list(PIPE_TABLE_GROUPS.keys()), index=1, key="main_pipe_std")
         pipe_table = PIPE_TABLE_GROUPS[geom_group]
         dn_keys = list(pipe_table.keys())
         dn_default = dn_keys.index('DN200 (NPS 8")') if 'DN200 (NPS 8")' in dn_keys else 0
-        dn_label = st.selectbox("Anma Çapı (DN / NPS)", dn_keys, index=dn_default)
-        schedule_keys = list(pipe_table[dn_label]["schedules"].keys())
-        sched_default = "40S" if "40S" in schedule_keys else ("Sch 40" if "Sch 40" in schedule_keys else schedule_keys[0])
-        schedule_label = st.selectbox("Et Kalınlığı / Schedule (mm)", schedule_keys, index=schedule_keys.index(sched_default))
+        dn_label = st.selectbox("Anma Çapı (DN / NPS)", dn_keys, index=dn_default, key="main_pipe_dn")
+        wall_options = get_wall_thickness_options(geom_group, dn_label)
+        wall_opt_keys = list(wall_options.keys())
+        sched_default = next(
+            (k for k in wall_opt_keys if k.startswith("40S") or k.startswith("Sch 40")),
+            wall_opt_keys[0],
+        )
+        schedule_label = st.selectbox(
+            "Et Kalınlığı / Schedule (mm)",
+            wall_opt_keys,
+            index=wall_opt_keys.index(sched_default),
+            key="main_pipe_sched",
+        )
         od_mm = pipe_table[dn_label]["od_mm"]
-        wall_thickness_mm = pipe_table[dn_label]["schedules"][schedule_label]
+        wall_thickness_mm = wall_options[schedule_label]
         diameter_mm = inner_diameter_mm(od_mm, wall_thickness_mm)
         st.caption(f"OD {od_mm:.1f} mm · ID {diameter_mm:.2f} mm · t {wall_thickness_mm:.2f} mm · {geom_group}")
     else:
@@ -293,15 +321,45 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
     pipe_mat_name = st.selectbox("Boru Malzemesi (ısıl iletkenlik)", list(PIPE_MATERIALS.keys()))
     roughness_um = st.number_input("Boru İç Pürüzlülüğü ε (µm)", min_value=1.0, max_value=500.0, value=45.0, step=5.0)
 
-    st.markdown("###### ↩️ Dönüş (Sirkülasyon) Hattı")
-    return_diameter_mm, _ = unit_input(
-        "Dönüş Hattı İç Çapı", "diameter", "return_diameter",
-        100.0, min_si=10.0, max_si=800.0, step_si=10.0,
+    st.markdown("###### ↩️🏭➡️🚢 Karadan Gemiye Dönüş (Sirkülasyon) Hattı")
+    return_geom_mode = st.radio(
+        "Dönüş Hattı Boyutlandırma Yöntemi",
+        ["ASME Tablosu", "Manuel Giriş"],
+        index=0 if preset is None else 1,
+        horizontal=True,
+        key=f"ret_geom_{preset_token}",
     )
-    return_wall_thickness_mm, _ = unit_input(
-        "Dönüş Hattı Et Kalınlığı", "diameter", "return_wall",
-        3.0, min_si=1.0, max_si=30.0, step_si=0.5,
-    )
+    if return_geom_mode == "ASME Tablosu":
+        ret_group = st.selectbox("Dönüş Hattı Standardı", list(PIPE_TABLE_GROUPS.keys()), index=1, key="ret_pipe_std")
+        ret_table = PIPE_TABLE_GROUPS[ret_group]
+        ret_dn_keys = list(ret_table.keys())
+        ret_dn_default = ret_dn_keys.index('DN100 (NPS 4")') if 'DN100 (NPS 4")' in ret_dn_keys else 0
+        ret_dn_label = st.selectbox("Dönüş Hattı Anma Çapı (DN / NPS)", ret_dn_keys, index=ret_dn_default, key="ret_pipe_dn")
+        ret_wall_options = get_wall_thickness_options(ret_group, ret_dn_label)
+        ret_wall_keys = list(ret_wall_options.keys())
+        ret_sched_default = next(
+            (k for k in ret_wall_keys if k.startswith("10S") or k.startswith("40S") or k.startswith("Sch 40")),
+            ret_wall_keys[0],
+        )
+        ret_sched_label = st.selectbox(
+            "Dönüş Hattı Et Kalınlığı / Schedule (mm)",
+            ret_wall_keys,
+            index=ret_wall_keys.index(ret_sched_default),
+            key="ret_pipe_sched",
+        )
+        ret_od_mm = ret_table[ret_dn_label]["od_mm"]
+        return_wall_thickness_mm = ret_wall_options[ret_sched_label]
+        return_diameter_mm = inner_diameter_mm(ret_od_mm, return_wall_thickness_mm)
+        st.caption(f"OD {ret_od_mm:.1f} mm · ID {return_diameter_mm:.2f} mm · t {return_wall_thickness_mm:.2f} mm · {ret_group}")
+    else:
+        return_diameter_mm, _ = unit_input(
+            "Dönüş Hattı İç Çapı", "diameter", "return_diameter",
+            100.0, min_si=10.0, max_si=800.0, step_si=10.0,
+        )
+        return_wall_thickness_mm, _ = unit_input(
+            "Dönüş Hattı Et Kalınlığı", "diameter", "return_wall",
+            3.0, min_si=1.0, max_si=30.0, step_si=0.5,
+        )
     return_mass_flow_kg_s, _ = unit_input(
         "Dönüş Hattı Debisi", "mass_flow", "return_flow",
         5.0, min_si=0.0, max_si=500.0, step_si=1.0,
@@ -320,43 +378,58 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
     comp_mode = st.radio("Akışkan Kompozisyon Modu", ["Standart Şablon", "Özel Komponent Listesi Düzenleyici"])
 
     if comp_mode == "Standart Şablon":
-        preset_comp_choice = st.selectbox("LNG Kompozisyon Şablonu", list(LNG_PRESET_COMPOSITIONS.keys()), index=1)
+        preset_comp_choice = st.selectbox(
+            "LNG Kompozisyon Şablonu",
+            [k for k in LNG_PRESET_COMPOSITIONS.keys() if LNG_PRESET_COMPOSITIONS[k] is not None],
+            index=1,
+        )
         if preset_comp_choice == "Saf Metan (%100 CH4)":
             is_pure_methane = True
             active_composition = {"Methane": 100.0}
         else:
             is_pure_methane = False
             active_composition = LNG_PRESET_COMPOSITIONS[preset_comp_choice]
-            summary_comp_str = ", ".join(f"{COMPONENT_LABELS.get(c, c)}: %{v:.1f}" for c, v in active_composition.items())
+            summary_comp_str = ", ".join(f"{COMPONENT_LABELS.get(c, c)}: %{v:.2f}" for c, v in active_composition.items())
             st.caption(f"🧪 **Bileşim:** {summary_comp_str}")
     else:
         is_pure_methane = False
-        st.markdown("###### 🧪 Çok Bileşenli Kompozisyon Düzenleyici")
+        st.markdown("###### 🧪 Çok Bileşenli Kompozisyon Düzenleyici (28 CoolProp Bileşeni)")
 
         avail_to_add = [c for c in AVAILABLE_LNG_COMPONENTS if c not in st.session_state["custom_composition"]]
         if avail_to_add:
-            c_add_col1, c_add_col2 = st.columns([3, 1])
+            c_add_col1, c_add_col2 = st.columns([2.6, 1.0], vertical_alignment="bottom")
             with c_add_col1:
-                comp_to_add = st.selectbox("Eklenecek Komponent", avail_to_add, format_func=lambda x: COMPONENT_LABELS.get(x, x), key="comp_add_sel")
+                comp_to_add = st.selectbox(
+                    "Eklenecek Komponent",
+                    avail_to_add,
+                    format_func=lambda x: f"{COMPONENT_LABELS.get(x, x)} [{LNG_COMPONENTS_CATALOG.get(x, {}).get('category', '')}]",
+                    key="comp_add_sel",
+                )
             with c_add_col2:
-                if st.button("➕ Ekle", key="btn_add_comp"):
-                    st.session_state["custom_composition"][comp_to_add] = 1.0
+                if st.button("➕ Ekle", key="btn_add_comp", use_container_width=True):
+                    st.session_state["custom_composition"][comp_to_add] = 0.5
                     st.rerun()
 
         to_delete = None
         for comp_name in list(st.session_state["custom_composition"].keys()):
-            col_k1, col_k2, col_k3 = st.columns([4, 3, 1])
+            col_k1, col_k2, col_k3 = st.columns([3.4, 2.2, 0.9], vertical_alignment="center")
             with col_k1:
-                st.write(f"**{COMPONENT_LABELS.get(comp_name, comp_name)}**")
+                mm_c = LNG_COMPONENTS_CATALOG.get(comp_name, {}).get("molar_mass", 16.04)
+                st.markdown(
+                    f"<div style='font-size:13px; font-weight:600; line-height:1.2;'>{COMPONENT_LABELS.get(comp_name, comp_name)}<br/>"
+                    f"<span style='font-size:10px; color:#8b949e;'>M = {mm_c:.2f} g/mol</span></div>",
+                    unsafe_allow_html=True,
+                )
             with col_k2:
                 val = st.number_input(
                     "Mol %",
                     min_value=0.0,
                     max_value=100.0,
                     value=float(st.session_state["custom_composition"][comp_name]),
-                    step=0.5,
+                    step=0.1,
+                    format="%.2f",
                     key=f"comp_input_{comp_name}",
-                    label_visibility="collapsed"
+                    label_visibility="collapsed",
                 )
                 st.session_state["custom_composition"][comp_name] = val
             with col_k3:
@@ -370,14 +443,14 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
 
         total_mol_pct = sum(st.session_state["custom_composition"].values())
         if abs(total_mol_pct - 100.0) > 0.05:
-            st.warning(f"⚠️ Toplam: %{total_mol_pct:.1f} (100% olmalıdır)")
+            st.warning(f"⚠️ Toplam: %{total_mol_pct:.2f} (100% olmalıdır)")
             if st.button("⚖️ 100%'e Otomatik Normalize Et", key="btn_norm_comp"):
                 if total_mol_pct > 0:
                     for k in st.session_state["custom_composition"]:
                         st.session_state["custom_composition"][k] = round((st.session_state["custom_composition"][k] / total_mol_pct) * 100.0, 2)
                     st.rerun()
         else:
-            st.success(f"✓ Toplam Mol Oranı: %{total_mol_pct:.1f}")
+            st.success(f"✓ Toplam Mol Oranı: %{total_mol_pct:.2f}")
 
         active_composition = st.session_state["custom_composition"]
 
@@ -385,6 +458,10 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
     if sum(active_composition.values()) <= 0.0:
         st.warning("⚠️ Tüm bileşen oranları sıfır. Varsayılan olarak saf metan seçildi.")
         active_composition = {"Methane": 100.0}
+
+    # Display calculated mixture molar mass
+    _fm_preview = FluidManager(fluid_type="pure_methane" if is_pure_methane else "mixture", composition=active_composition)
+    st.caption(f"⚖️ **Karışım Mol Kütlesi (M_mix):** {_fm_preview.mixture_molar_mass_g_mol():.2f} g/mol ({len(active_composition)} bileşen)")
 
     inlet_t_k, t_unit = unit_input(
         "Giriş Sıcaklığı T_in", "temperature", "inlet_t",
@@ -554,6 +631,10 @@ def _p_show(pa, unit):
     return from_si("pressure", pa, unit)
 
 
+def _dp_show(pa, unit):
+    return delta_from_si("pressure", pa, unit)
+
+
 def _m_show(kg_s, unit):
     return from_si("mass_flow", kg_s, unit)
 
@@ -634,7 +715,8 @@ st.markdown(f'<div class="main-header">❄️ LNG Boru Akışı Termo-Hidrolik S
 st.markdown('<div class="sub-header">Cryogenic LNG Pipeline Thermal Ingress, Hydraulic Pressure Drop & Near-Wall / Bulk Flashing Risk Engine</div>', unsafe_allow_html=True)
 
 u_t = t_unit
-u_p = p_unit
+u_p = unit_display_label("pressure", p_unit)
+u_dp = delta_unit_display_label("pressure", p_unit)
 u_f = flow_unit
 
 # Flashing Banner
@@ -656,11 +738,11 @@ if is_3d_mode:
         </div>
         """, unsafe_allow_html=True)
     else:
-        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, p_unit)
+        min_margin_d = _dp_show(sim_results.min_flashing_margin_pa, p_unit)
         st.markdown(f"""
         <div class="status-safe-box">
             ✓ <b>GÜVENLİ İŞLETME: HEM ÇEPER HEM YIĞIN TAM SIVI FAZDA</b><br/>
-            Boru boyunca en kritik iç çeperde dahi buharlaşma marjı pozitiftir (Minimum güvenlik marjı: {min_margin_d:.2f} {u_p}).
+            Boru boyunca en kritik iç çeperde dahi buharlaşma marjı pozitiftir (Minimum güvenlik marjı: {min_margin_d:.2f} {u_dp}).
         </div>
         """, unsafe_allow_html=True)
 else:
@@ -673,11 +755,11 @@ else:
         </div>
         """, unsafe_allow_html=True)
     else:
-        min_margin_d = _p_show(sim_results.min_flashing_margin_pa, p_unit)
+        min_margin_d = _dp_show(sim_results.min_flashing_margin_pa, p_unit)
         st.markdown(f"""
         <div class="status-safe-box">
             ✓ <b>GÜVENLİ İŞLETME: TEK FAZ SIVI AKIŞI KORUNUYOR</b><br/>
-            Minimum güvenlik marjı: {min_margin_d:.2f} {u_p}.
+            Minimum güvenlik marjı: {min_margin_d:.2f} {u_dp}.
         </div>
         """, unsafe_allow_html=True)
 
@@ -703,10 +785,10 @@ delta_p_pa = sim_results.total_pressure_drop_pa
 outlet_t_d = _t_show(outlet_t_k, t_unit)
 delta_t_d = delta_from_si("temperature", delta_t_k, t_unit)  # sıcaklık farkı: offset yok
 outlet_p_d = _p_show(outlet_p_pa, p_unit)
-delta_p_d = _p_show(delta_p_pa, p_unit)
+delta_p_d = _dp_show(delta_p_pa, p_unit)
 outlet_psat_d = _p_show(outlet_psat_pa, p_unit)
-delta_psat_d = _p_show(delta_psat_pa, p_unit)
-min_margin_d = _p_show(min_margin_pa, p_unit)
+delta_psat_d = _dp_show(delta_psat_pa, p_unit)
+min_margin_d = _dp_show(min_margin_pa, p_unit)
 heat_kw = sim_results.total_heat_ingress_w / 1000.0
 
 with c1:
@@ -723,7 +805,7 @@ with c2:
     <div class="metric-card">
         <div class="metric-title">Çıkış Statik Basıncı</div>
         <div class="metric-value">{outlet_p_d:.2f} {u_p}</div>
-        <div class="metric-delta delta-down">▼ -{delta_p_d:.2f} {u_p} hidrolik kayıp</div>
+        <div class="metric-delta delta-down">▼ -{delta_p_d:.2f} {u_dp} hidrolik kayıp</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -732,7 +814,7 @@ with c3:
     <div class="metric-card">
         <div class="metric-title">Çıkış Buhar Basıncı (Psat)</div>
         <div class="metric-value">{outlet_psat_d:.2f} {u_p}</div>
-        <div class="metric-delta delta-up">▲ +{delta_psat_d:.2f} {u_p} artış</div>
+        <div class="metric-delta delta-up">▲ +{delta_psat_d:.2f} {u_dp} artış</div>
     </div>
     """, unsafe_allow_html=True)
 
@@ -741,7 +823,7 @@ with c4:
     st.markdown(f"""
     <div class="metric-card">
         <div class="metric-title">Min. Kavitasyon Marjı</div>
-        <div class="metric-value">{min_margin_d:.2f} {u_p}</div>
+        <div class="metric-value">{min_margin_d:.2f} {u_dp}</div>
         <div class="metric-delta {margin_class}">P - Psat marjı</div>
     </div>
     """, unsafe_allow_html=True)
@@ -797,7 +879,7 @@ with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama"
     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
     bog_kg_s = terminal_ops.bog_rate_kg_h / 3600.0
     p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, p_unit)
-    surge_d = _p_show(surge_mech["actual_surge_bar"] * 1e5, p_unit)
+    surge_d = _dp_show(surge_mech["actual_surge_bar"] * 1e5, p_unit)
     peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, p_unit)
     surge_limit_d = _p_show(design_p_bar * 1e5 * 1.33, p_unit)
     with col_t1:
@@ -811,7 +893,7 @@ with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama"
     with col_t4:
         # B7: surge acceptance vs design pressure (1.33x occasional overpressure allowance), not hard-coded 5 bar
         surge_safe = surge_mech["peak_line_pressure_bar"] <= design_p_bar * 1.33
-        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_p}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
+        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_dp}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
 
     # Pompalama Önerisi ve Güç Analizi Alt Satırı
     st.markdown("---")

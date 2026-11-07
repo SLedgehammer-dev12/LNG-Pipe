@@ -52,7 +52,20 @@ def test_unit_switch_converts_input_and_output():
     for s in at.sidebar.selectbox:
         if s.label == "Giriş Sıcaklığı T_in birimi":
             s.set_value("°F")
+        elif s.label == "Giriş Toplam Basıncı P_in birimi":
+            s.set_value("bar (g)")
+        elif s.label == "Et Kalınlığı / Schedule (mm)":
+            unsched = [opt for opt in s.options if "Schedule'sız" in opt]
+            assert unsched, "ASME B36.19 main line must list unscheduled mm wall thicknesses"
+            s.set_value(unsched[0])
+        elif s.label == "Dönüş Hattı Et Kalınlığı / Schedule (mm)":
+            ret_unsched = [opt for opt in s.options if "Schedule'sız" in opt]
+            assert ret_unsched, "ASME B36.19 return line must list unscheduled mm wall thicknesses"
+            s.set_value(ret_unsched[0])
     at.run()
     assert not at.exception, at.exception[0].value if at.exception else "unknown error"
     assert abs(_inputs(at)["Giriş Sıcaklığı T_in"] - (-258.7)) < 0.2
+    # 5.0 bar (abs) -> 5.0 - 1.01325 = 3.98675 bar (g)
+    assert abs(_inputs(at)["Giriş Toplam Basıncı P_in"] - 3.98675) < 0.01
     assert any("°F" in m.value for m in at.markdown if "metric-value" in m.value)
+    assert any("bar (g)" in m.value for m in at.markdown if "metric-value" in m.value)

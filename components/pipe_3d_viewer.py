@@ -22,14 +22,15 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
         flash_point = results.flashing_point_m or 0.0
 
     # Convert to display units
-    from core.units import from_si, delta_from_si
+    from core.units import from_si, delta_from_si, unit_display_label
     inlet_t_d = from_si("temperature", cfg.inlet_temperature_k, temp_unit)
     outlet_t_d = from_si("temperature", outlet_t_k, temp_unit)
     inlet_p_d = from_si("pressure", cfg.inlet_pressure_pa, press_unit)
     outlet_p_d = from_si("pressure", results.pressure_pa[-1], press_unit)
     outlet_psat_d = from_si("pressure", outlet_psat_pa, press_unit)
-    min_margin_d = from_si("pressure", results.min_flashing_margin_pa, press_unit)
+    min_margin_d = delta_from_si("pressure", results.min_flashing_margin_pa, press_unit)
     flash_ratio = (flash_point / cfg.length_m) if cfg.length_m > 0 else 0.0
+    p_lbl = unit_display_label("pressure", press_unit)
 
     # Build telemetry data payload for client-side JS
     telemetry = {
@@ -47,7 +48,7 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
         "flash_ratio": round(flash_ratio, 3),
         "heat_ingress_kw": round(results.total_heat_ingress_w / 1000.0, 2),
         "temp_unit": temp_unit,
-        "press_unit": press_unit,
+        "press_unit": p_lbl,
     }
 
     html = f"""

@@ -46,3 +46,18 @@ def test_dn200_carbon_lists_full_schedule_set():
 
 def test_inner_diameter_formula():
     assert inner_diameter_mm(219.1, 8.18) == 219.1 - 2.0 * 8.18
+
+
+def test_b36_19_includes_unscheduled_mm_thicknesses():
+    from core.pipe_schedule import get_wall_thickness_options
+
+    ss_group = "Paslanmaz Çelik (ASME B36.19)"
+    ss_table = PIPE_TABLE_GROUPS[ss_group]
+    for dn_label, row in ss_table.items():
+        assert len(row.get("unscheduled_mm", [])) >= 5, dn_label
+        opts = get_wall_thickness_options(ss_group, dn_label)
+        # Contains both S-schedules and unscheduled mm options
+        assert any("S (" in k for k in opts), dn_label
+        assert any("Schedule'sız" in k for k in opts), dn_label
+        for opt_lbl, wall_mm in opts.items():
+            assert 0.0 < wall_mm < row["od_mm"] / 2.0, (dn_label, opt_lbl)

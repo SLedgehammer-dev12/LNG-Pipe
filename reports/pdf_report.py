@@ -16,7 +16,7 @@ from core.mechanics import (
     calculate_thermal_contraction_and_omega_loop,
     calculate_joukowsky_surge,
 )
-from core.units import from_si
+from core.units import from_si, delta_from_si, unit_display_label, delta_unit_display_label
 
 
 def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = "°C", press_unit: str = "bar", cell_data: list = None) -> bytes:
@@ -56,16 +56,18 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
         v_out = results.velocity_m_s[-1]
 
     # Convert all values to display units
+    p_lbl = unit_display_label("pressure", press_unit)
+    dp_lbl = delta_unit_display_label("pressure", press_unit)
     t_in_d = from_si("temperature", cfg.inlet_temperature_k, temp_unit)
     t_out_d = from_si("temperature", outlet_t_k, temp_unit)
     p_in_d = from_si("pressure", cfg.inlet_pressure_pa, press_unit)
     p_out_d = from_si("pressure", outlet_p_pa, press_unit)
     psat_out_d = from_si("pressure", outlet_psat_pa, press_unit)
     psat_in_d = from_si("pressure", inlet_psat_pa, press_unit)
-    margin_d = from_si("pressure", results.min_flashing_margin_pa, press_unit)
-    delta_t_d = from_si("temperature", outlet_t_k - cfg.inlet_temperature_k, temp_unit)  # delta: no offset
-    delta_p_d = from_si("pressure", results.total_pressure_drop_pa, press_unit)
-    delta_psat_d = from_si("pressure", outlet_psat_pa - inlet_psat_pa, press_unit)
+    margin_d = delta_from_si("pressure", results.min_flashing_margin_pa, press_unit)
+    delta_t_d = delta_from_si("temperature", outlet_t_k - cfg.inlet_temperature_k, temp_unit)
+    delta_p_d = delta_from_si("pressure", results.total_pressure_drop_pa, press_unit)
+    delta_psat_d = delta_from_si("pressure", outlet_psat_pa - inlet_psat_pa, press_unit)
     heat_kw = results.total_heat_ingress_w / 1000.0
 
     styles = getSampleStyleSheet()
@@ -151,7 +153,7 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
         [Paragraph("Eğim Açısı", bold_style), Paragraph(f"{cfg.inclination_deg:.1f}°", body_style),
          Paragraph("Mutlak Pürüzlülük", bold_style), Paragraph(f"{cfg.roughness_m * 1e6:.1f} µm", body_style)],
         [Paragraph("Giriş Sıcaklığı (T_in)", bold_style), Paragraph(f"{t_in_d:.2f} {temp_unit}", body_style),
-         Paragraph("Giriş Basıncı (P_in)", bold_style), Paragraph(f"{p_in_d:.3f} {press_unit}", body_style)],
+         Paragraph("Giriş Basıncı (P_in)", bold_style), Paragraph(f"{p_in_d:.3f} {p_lbl}", body_style)],
         [Paragraph("Kütlesel Debi", bold_style), Paragraph(f"{cfg.mass_flow_rate_kg_s:.2f} kg/s ({cfg.mass_flow_rate_kg_s * 3.6:.1f} t/h)", body_style),
          Paragraph("Akış Hızı (Giriş)", bold_style), Paragraph(f"{v_in:.2f} m/s", body_style)],
     ]
@@ -169,11 +171,11 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
     results_data = [
         [Paragraph("Çıkış Sıcaklığı (T_out)", bold_style), Paragraph(f"{t_out_d:.2f} {temp_unit}", body_style),
          Paragraph("Sıcaklık Artışı (ΔT)", bold_style), Paragraph(f"{delta_t_d:.2f} {temp_unit}", body_style)],
-        [Paragraph("Çıkış Statik Basıncı (P_out)", bold_style), Paragraph(f"{p_out_d:.3f} {press_unit}", body_style),
-         Paragraph("Toplam Basınç Düşüşü (ΔP)", bold_style), Paragraph(f"{delta_p_d:.3f} {press_unit}", body_style)],
-        [Paragraph("Çıkış Buhar Basıncı (Psat)", bold_style), Paragraph(f"{psat_out_d:.3f} {press_unit}", body_style),
-         Paragraph("Buhar Basıncı Artışı (ΔPsat)", bold_style), Paragraph(f"{delta_psat_d:.3f} {press_unit}", body_style)],
-        [Paragraph("Min. Kavitasyon/Flaş Marjı", bold_style), Paragraph(f"{margin_d:.3f} {press_unit}", body_style),
+        [Paragraph("Çıkış Statik Basıncı (P_out)", bold_style), Paragraph(f"{p_out_d:.3f} {p_lbl}", body_style),
+         Paragraph("Toplam Basınç Düşüşü (ΔP)", bold_style), Paragraph(f"{delta_p_d:.3f} {dp_lbl}", body_style)],
+        [Paragraph("Çıkış Buhar Basıncı (Psat)", bold_style), Paragraph(f"{psat_out_d:.3f} {p_lbl}", body_style),
+         Paragraph("Buhar Basıncı Artışı (ΔPsat)", bold_style), Paragraph(f"{delta_psat_d:.3f} {dp_lbl}", body_style)],
+        [Paragraph("Min. Kavitasyon/Flaş Marjı", bold_style), Paragraph(f"{margin_d:.3f} {dp_lbl}", body_style),
          Paragraph("Toplam Isı Girişi (Q_tot)", bold_style), Paragraph(f"{heat_kw:.2f} kW ({results.total_heat_ingress_w / cfg.length_m:.1f} W/m)", body_style)],
     ]
     results_table = Table(results_data, colWidths=[130, 130, 130, 130])

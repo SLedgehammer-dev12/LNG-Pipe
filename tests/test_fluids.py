@@ -77,3 +77,39 @@ def test_b10_composition_guard_rejects_empty():
     with pytest.raises(ValueError):
         FluidManager(fluid_type="mixture", composition={"Methane": 0.0, "Ethane": 0.0})
 
+
+def test_expanded_coolprop_components_heavy_hc_co2_n2():
+    from core.fluids import AVAILABLE_LNG_COMPONENTS, LNG_COMPONENTS_CATALOG
+
+    assert len(AVAILABLE_LNG_COMPONENTS) >= 25
+    for expected in (
+        "Methane", "Ethane", "Propane", "IsoButane", "n-Butane",
+        "Isopentane", "n-Pentane", "Neopentane", "n-Hexane", "n-Heptane",
+        "n-Octane", "n-Nonane", "n-Decane", "Nitrogen", "CarbonDioxide",
+        "HydrogenSulfide", "Helium", "Hydrogen", "Argon", "Oxygen",
+    ):
+        assert expected in LNG_COMPONENTS_CATALOG
+
+    heavy_mix = {
+        "Methane": 86.0,
+        "Ethane": 7.5,
+        "Propane": 3.0,
+        "IsoButane": 0.8,
+        "n-Butane": 0.7,
+        "Isopentane": 0.3,
+        "n-Pentane": 0.2,
+        "n-Hexane": 0.2,
+        "n-Octane": 0.05,
+        "Nitrogen": 1.0,
+        "CarbonDioxide": 0.2,
+        "Helium": 0.05,
+    }
+    fm_heavy = FluidManager(fluid_type="mixture", composition=heavy_mix)
+    fm_pure = FluidManager(fluid_type="pure_methane")
+    assert fm_heavy.mixture_molar_mass_g_mol() > fm_pure.mixture_molar_mass_g_mol()
+
+    props = fm_heavy.get_properties(112.0, 5.0e5)
+    assert 425.0 < props.density < 550.0
+    assert 2000.0 < props.specific_heat < 4500.0
+    assert props.vapor_pressure > 50000.0
+

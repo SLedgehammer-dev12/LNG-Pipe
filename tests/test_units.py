@@ -34,3 +34,22 @@ def test_flow_conversions():
     assert to_si("mass_flow", 40.0, "kg/s") == pytest.approx(40.0)
     assert to_si("mass_flow", 144.0, "t/h") == pytest.approx(40.0)
     assert from_si("mass_flow", 40.0, "kg/h") == pytest.approx(144000.0)
+
+
+def test_pressure_absolute_and_gauge_conversions():
+    from core.units import P_ATM_PA, unit_display_label, delta_unit_display_label
+
+    # Absolute vs Gauge conversion
+    assert to_si("pressure", 4.0, "bar (abs)") == pytest.approx(4.0e5)
+    assert to_si("pressure", 4.0, "bar (g)") == pytest.approx(4.0e5 + P_ATM_PA)
+    assert from_si("pressure", 5.01325e5, "bar (g)") == pytest.approx(4.0)
+    assert from_si("pressure", 5.01325e5, "bar (abs)") == pytest.approx(5.01325)
+
+    # Differential pressure (ΔP) has no atmospheric offset even in gauge mode
+    assert delta_from_si("pressure", 1.5e5, "bar (g)") == pytest.approx(1.5)
+    assert delta_from_si("pressure", 1.5e5, "bar (abs)") == pytest.approx(1.5)
+
+    # Display labels explicitly identify (abs) vs (g)
+    assert unit_display_label("pressure", "bar") == "bar (abs)"
+    assert unit_display_label("pressure", "bar (g)") == "bar (g)"
+    assert delta_unit_display_label("pressure", "bar (g)") == "bar"
