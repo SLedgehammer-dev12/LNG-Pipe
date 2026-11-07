@@ -80,6 +80,11 @@ class PipelineSolver:
     def solve(self) -> PipelineSimulationResults:
         """Executes marching integration from inlet (x=0) to outlet (x=L)."""
         cfg = self.config
+        if cfg.mass_flow_rate_kg_s <= 0.0:
+            raise ValueError(f"mass_flow_rate_kg_s must be > 0 (got {cfg.mass_flow_rate_kg_s})")
+        if cfg.length_m <= 0.0 or cfg.inner_diameter_m <= 0.0 or cfg.num_cells <= 0:
+            raise ValueError("length_m, inner_diameter_m, and num_cells must be > 0")
+
         dx = cfg.length_m / cfg.num_cells
         flow_area = (math.pi / 4.0) * (cfg.inner_diameter_m ** 2)
         rel_roughness = cfg.roughness_m / cfg.inner_diameter_m

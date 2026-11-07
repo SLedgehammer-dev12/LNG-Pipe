@@ -39,8 +39,11 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
         inlet_psat_pa = results.wall_vapor_pressure_pa[0]
         flashed = results.has_wall_flashed
         flash_point_m = results.wall_flashing_point_m or 0.0
-        v_in = cfg.mass_flow_rate_kg_s / (422.0 * math.pi * ((cfg.inner_diameter_m / 2.0) ** 2))
-        v_out = v_in
+        rho_in = results.density_kg_m3[0] if (hasattr(results, "density_kg_m3") and len(results.density_kg_m3) > 0) else 425.0
+        rho_out = results.density_kg_m3[-1] if (hasattr(results, "density_kg_m3") and len(results.density_kg_m3) > 0) else 425.0
+        flow_area = math.pi * ((cfg.inner_diameter_m / 2.0) ** 2)
+        v_in = cfg.mass_flow_rate_kg_s / (rho_in * flow_area)
+        v_out = cfg.mass_flow_rate_kg_s / (rho_out * flow_area)
     else:
         cfg = results.config
         outlet_t_k = results.outlet_temperature_k

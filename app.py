@@ -969,7 +969,8 @@ with tab_report:
         report_date = st.text_input("Tarih", value="2026-11-06")
 
     st.markdown("###### 🔍 Standartlar Uygunluk Özeti (ASME B31.3 & EN 1473)")
-    v_approx = mass_flow_kg_s / (422.0 * (np.pi * (diameter_mm / 2000.0) ** 2))
+    rho_flow = sim_results.density_kg_m3[0] if (hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0) else 425.0
+    v_approx = mass_flow_kg_s / (rho_flow * (np.pi * (diameter_mm / 2000.0) ** 2))
     m_bar = sim_results.min_flashing_margin_pa / 1e5
     
     compliance_rows = [
