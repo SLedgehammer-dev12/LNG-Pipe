@@ -226,7 +226,8 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
         specific_heat=3480.0,
         latent_heat=510500.0,
         delta_t_allowable=1.5,
-        pressure_drop_pa=results.total_pressure_drop_pa
+        pressure_drop_pa=results.total_pressure_drop_pa,
+        main_mass_flow_kg_s=cfg.mass_flow_rate_kg_s
     )
 
     d_out_eval = cfg.inner_diameter_m + 0.012  # Nominal pipe outer diameter estimation
@@ -244,6 +245,8 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
     terminal_data = [
         [Paragraph("Statik Hat BOG Üretim Hızı", bold_style), Paragraph(f"{t_ops.bog_rate_kg_h:.1f} kg/saat ({t_ops.bog_rate_nm3_h:.1f} Nm³/saat)", body_style),
          Paragraph("Min. Cooldown Sirkülasyon Debisi", bold_style), Paragraph(f"{t_ops.recirc_min_flow_m3_h:.1f} m³/saat (P-201: {t_ops.recirc_pump_power_kw:.1f} kW)", body_style)],
+        [Paragraph("Gemiden Karaya Boşaltım Pompalaması", bold_style), Paragraph(f"{t_ops.unloading_flow_m3_h:.1f} m³/saat | TDH: {t_ops.unloading_pump_head_m:.1f} mLC", body_style),
+         Paragraph("Kargo Pompası Motor Gücü & Öneri", bold_style), Paragraph(f"Toplam {t_ops.unloading_pump_power_kw:.1f} kW<br/>{t_ops.unloading_pump_recommendation}", body_style)],
         [Paragraph("Hat Isıl Büzülme Miktarı (ΔL)", bold_style), Paragraph(f"{omega_eval['contraction_rate_mm_per_m']:.2f} mm/m ({omega_eval['total_line_contraction_m']:.2f} m/km)", body_style),
          Paragraph("ESDV Kapanma Koç Darbesi (15s)", bold_style), Paragraph(f"+{surge_eval['actual_surge_bar']:.2f} bar (P_peak: {surge_eval['peak_line_pressure_bar']:.1f} bar)", body_style)]
     ]

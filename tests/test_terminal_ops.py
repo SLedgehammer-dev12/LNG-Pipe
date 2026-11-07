@@ -21,7 +21,7 @@ def test_latent_heat_and_bubble_dew_temperature():
 
 
 def test_evaluate_terminal_operations_metrics():
-    # 500m DN200 line, 15 kW heat ingress
+    # 500m DN200 line, 15 kW heat ingress, 150 kg/s unloading flow
     metrics = evaluate_terminal_operations(
         total_heat_w=15000.0,
         length_m=500.0,
@@ -30,7 +30,8 @@ def test_evaluate_terminal_operations_metrics():
         specific_heat=3480.0,
         latent_heat=510000.0,
         delta_t_allowable=1.5,
-        pressure_drop_pa=1.2e5
+        pressure_drop_pa=1.2e5,
+        main_mass_flow_kg_s=150.0
     )
     assert isinstance(metrics, TerminalOperatingMetrics)
     assert metrics.bog_rate_kg_h > 0.0
@@ -44,6 +45,10 @@ def test_evaluate_terminal_operations_metrics():
     assert 15.0 < metrics.recirc_min_flow_m3_h < 35.0
     assert metrics.recirc_pump_head_m > 0.0
     assert metrics.recirc_pump_power_kw > 0.0
+    assert metrics.unloading_flow_m3_h > 1000.0
+    assert metrics.unloading_pump_head_m > 0.0
+    assert metrics.unloading_pump_power_kw > 0.0
+    assert "Daldırma" in metrics.unloading_pump_recommendation
 
 
 def test_two_phase_flashing_multipliers():

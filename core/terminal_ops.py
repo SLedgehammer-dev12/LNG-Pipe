@@ -19,6 +19,11 @@ class TerminalOperatingMetrics:
     recirc_pump_head_m: float
     recirc_pump_power_kw: float
     stratification_risk: bool
+    unloading_flow_m3_h: float = 0.0
+    unloading_pump_head_m: float = 0.0
+    unloading_pump_power_kw: float = 0.0
+    unloading_pump_recommendation: str = ""
+    recirc_pump_recommendation: str = ""
 
 
 def evaluate_terminal_operations(
@@ -29,9 +34,12 @@ def evaluate_terminal_operations(
     specific_heat: float,
     latent_heat: float,
     delta_t_allowable: float = 1.5,
-    pressure_drop_pa: float = 1.5e5
+    pressure_drop_pa: float = 1.5e5,
+    main_mass_flow_kg_s: float = 0.0,
+    tank_backpressure_pa: float = 0.3e5,
+    fitting_loss_factor: float = 0.20
 ) -> TerminalOperatingMetrics:
-    """Calculates BOG rates, standby boil-off, and cooldown recirculation pumping requirements."""
+    """Calculates BOG rates, standby boil-off, and pumping requirements for both unloading and cooldown recirculation."""
     # 1. BOG Rates during standby/heat ingress
     bog_kg_s = total_heat_w / max(latent_heat, 200000.0)
     bog_kg_h = bog_kg_s * 3600.0
@@ -60,6 +68,29 @@ def evaluate_terminal_operations(
     dp_circuit = max(pressure_drop_pa, 1.0e5)
     head_m = dp_circuit / (rho_liq * g)
     p_shaft_kw = (m_recirc_kg_s * (dp_circuit / rho_liq) / (0.70 * 0.90)) / 1000.0
+    recirc_rec = f"P-201 Karadan Gemiye Kriyo Sirkülasyon: {q_recirc_m3_h:.1f} m³/h @ {head_m:.1f} mLC (Motor: ~{p_shaft_kw:.1f} kW)"
+
+    # 4. Main Unloading Pumping Requirements (Gemiden Karaya Ana Boşaltım Pompalaması)
+    q_unload_m3_h = (main_mass_flow_kg_s / rho_liq) * 3600.0 if main_mass_flow_kg_s > 0 else 0.0
+    dp_unload_total = max(pressure_drop_pa, 0.0) * (1.0 + fitting_loss_factor) + tank_backpressure_pa
+    head_unload_m = dp_unload_total / (rho_liq * g) if rho_liq > 0 else 0.0
+    # Combined cryogenic pump & drive efficiency (~69%: 75% hydraulic, 92% electric motor)
+    p_unload_kw = (main_mass_flow_kg_s * (dp_unload_total / rho_liq) / (0.75 * 0.92)) / 1000.0 if main_mass_flow_kg_s > 0 else 0.0
+
+    if q_unload_m3_h > 2500.0:
+        n_pumps = 4
+        flow_per_p = q_unload_m3_h / n_pumps
+        kw_per_p = p_unload_kw / n_pumps
+        unload_rec = f"Tavsiye: 4x Daldırma Kargo Pompası (her biri ~{flow_per_p:.0f} m³/h @ {head_unload_m:.0f} mLC, motor: ~{kw_per_p:.0f} kW)"
+    elif q_unload_m3_h > 1000.0:
+        n_pumps = 2
+        flow_per_p = q_unload_m3_h / n_pumps
+        kw_per_p = p_unload_kw / n_pumps
+        unload_rec = f"Tavsiye: 2x Daldırma Kargo Pompası (her biri ~{flow_per_p:.0f} m³/h @ {head_unload_m:.0f} mLC, motor: ~{kw_per_p:.0f} kW)"
+    elif q_unload_m3_h > 0:
+        unload_rec = f"Tavsiye: 1x Kriyo Transfer Pompası (~{q_unload_m3_h:.0f} m³/h @ {head_unload_m:.0f} mLC, motor: ~{p_unload_kw:.0f} kW)"
+    else:
+        unload_rec = "Ana boşaltım akışı tanımlı değil (Standby modu)."
 
     return TerminalOperatingMetrics(
         total_heat_ingress_w=total_heat_w,
@@ -71,5 +102,10 @@ def evaluate_terminal_operations(
         recirc_velocity_m_s=v_recirc,
         recirc_pump_head_m=head_m,
         recirc_pump_power_kw=p_shaft_kw,
-        stratification_risk=stratification_risk
+        stratification_risk=stratification_risk,
+        unloading_flow_m3_h=q_unload_m3_h,
+        unloading_pump_head_m=head_unload_m,
+        unloading_pump_power_kw=p_unload_kw,
+        unloading_pump_recommendation=unload_rec,
+        recirc_pump_recommendation=recirc_rec
     )

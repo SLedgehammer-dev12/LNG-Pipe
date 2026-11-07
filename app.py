@@ -775,7 +775,8 @@ terminal_ops = evaluate_terminal_operations(
     specific_heat=3480.0,
     latent_heat=latent_heat_val,
     delta_t_allowable=1.5,
-    pressure_drop_pa=sim_results.total_pressure_drop_pa
+    pressure_drop_pa=sim_results.total_pressure_drop_pa,
+    main_mass_flow_kg_s=mass_flow_kg_s
 )
 
 d_outer_m = (diameter_mm + 2.0 * wall_thickness_mm) / 1000.0
@@ -792,7 +793,7 @@ v_nom = mass_flow_kg_s / (rho_avg * (np.pi * (diameter_mm / 2000.0) ** 2))
 surge_mech = calculate_joukowsky_surge(pipe_spec, v_nom, valve_closure_time_s, wall_thickness_mm / 1000.0)
 omega_mech = calculate_thermal_contraction_and_omega_loop(pipe_spec, anchor_distance_m=anchor_dist_m, outer_diameter_m=d_outer_m)
 
-with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik Doğrulama", expanded=True):
+with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama", expanded=True):
     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
     bog_kg_s = terminal_ops.bog_rate_kg_h / 3600.0
     p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, p_unit)
@@ -802,7 +803,7 @@ with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik D
     with col_t1:
         st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{_m_show(bog_kg_s, flow_unit):.2f} {u_f}</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
     with col_t2:
-        st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} m)</span>", unsafe_allow_html=True)
+        st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} mLC)</span>", unsafe_allow_html=True)
     with col_t3:
         # B6: mill undertolerance — worst-case actual thickness (0.875*t_nom) must meet t_required
         t_ok = (wall_thickness_mm * (1.0 - pipe_spec.mill_tolerance)) >= asme_mech["t_required_min_mm"]
@@ -811,6 +812,15 @@ with st.expander("🏭 Terminal Operasyonları & ASME B31.3 Kriyojenik Mekanik D
         # B7: surge acceptance vs design pressure (1.33x occasional overpressure allowance), not hard-coded 5 bar
         surge_safe = surge_mech["peak_line_pressure_bar"] <= design_p_bar * 1.33
         st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_p}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
+
+    # Pompalama Önerisi ve Güç Analizi Alt Satırı
+    st.markdown("---")
+    col_p1, col_p2 = st.columns(2)
+    with col_p1:
+        st.info(f"⚓ **Gemiden Karaya Ana Boşaltım Pompalaması (Cargo Pumps):**\n- **Toplam Boşaltım Debisi:** {terminal_ops.unloading_flow_m3_h:.1f} m³/h ({mass_flow_kg_s:.1f} kg/s)\n- **Manometrik Basma Yüksekliği (TDH):** {terminal_ops.unloading_pump_head_m:.1f} mLC ({terminal_ops.unloading_pump_head_m * rho_avg * 9.80665 / 1e5:.2f} bar)\n- **Toplam Şaft / Motor Gücü:** {terminal_ops.unloading_pump_power_kw:.1f} kW\n- **Öneri:** {terminal_ops.unloading_pump_recommendation}")
+    with col_p2:
+        strat_warn = "⚠️ Akış hızı düşük (Richardson tabakalaşma riski var)" if terminal_ops.stratification_risk else "✓ Akış hızı yeterli (Termal eğilme / tabakalaşma önlendi)"
+        st.success(f"🔄 **Karadan Gemiye Soğuk Tutma Sirkülasyonu (P-201 Recirculation):**\n- **Minimum Soğuk Tutma Debisi:** {terminal_ops.recirc_min_flow_m3_h:.1f} m³/h ({terminal_ops.recirc_velocity_m_s:.2f} m/s)\n- **P-201 Basma Yüksekliği (Circuit TDH):** {terminal_ops.recirc_pump_head_m:.1f} mLC ({terminal_ops.recirc_pump_head_m * rho_avg * 9.80665 / 1e5:.2f} bar)\n- **P-201 Motor Şaft Gücü:** {terminal_ops.recirc_pump_power_kw:.1f} kW\n- **Termal Denge Durumu:** {strat_warn}")
 
 # --- VIEW TABS ---
 tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([
