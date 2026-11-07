@@ -403,6 +403,34 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
     inlet_t_c = inlet_t_k - 273.15
     inlet_p_bar = inlet_p_pa / 1e5
 
+    # ---- Girdi doğrulama uyarıları (fiziksel sınırlar) ----
+    T_TRIPLE_K = 90.7      # Metan üçlü noktası sıcaklığı
+    T_CRIT_K = 190.6       # Metan kritik sıcaklığı
+    P_TRIPLE_PA = 11696.0  # Metan üçlü noktası basıncı
+    P_CRIT_PA = 4.6e6      # Metan kritik basıncı
+
+    if inlet_t_k <= T_TRIPLE_K * 1.05:
+        st.warning(
+            f"⚠️ Giriş sıcaklığı üçlü noktaya çok yakın ({inlet_t_c:.1f} °C). "
+            "EOS sonuçları bu bölgede kesin olmayabilir."
+        )
+    elif inlet_t_k >= T_CRIT_K * 0.95:
+        st.warning(
+            f"⚠️ Giriş sıcaklığı kritik noktaya çok yakın ({inlet_t_c:.1f} °C). "
+            "Sıvı-buhan ayrımı tanımsız olabilir."
+        )
+
+    if inlet_p_pa <= P_TRIPLE_PA * 1.5:
+        st.warning(
+            f"⚠️ Giriş basıncı üçlü noktaya çok yakın ({inlet_p_bar:.3f} bar). "
+            "Akışkan sihhi fazta olmayabilir."
+        )
+    elif inlet_p_pa >= P_CRIT_PA * 0.95:
+        st.warning(
+            f"⚠️ Giriş basıncı kritik noktaya çok yakın ({inlet_p_bar:.3f} bar). "
+            "Sıvı-gaz ayrımı kalmaz."
+        )
+
 with st.sidebar.expander("🛡️ Çok Katmanlı Kriyojenik İzolasyon", expanded=True):
     ins_pack_choice = st.selectbox(
         "Hazır İzolasyon Paketi Şablonu",
