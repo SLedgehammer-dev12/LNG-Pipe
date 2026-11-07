@@ -19,7 +19,7 @@ from core.mechanics import (
 from core.units import from_si
 
 
-def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = "°C", press_unit: str = "bar") -> bytes:
+def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = "°C", press_unit: str = "bar", cell_data: list = None) -> bytes:
     """Generates an executive engineering calculation sheet in PDF format."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -252,6 +252,19 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
     ]))
     story.append(terminal_table)
     story.append(Spacer(1, 15))
+
+    # 5. Dilim Bazlı Veriler (Özet)
+    if cell_data:
+        story.append(Paragraph("5. Dilim Bazlı Veriler (Özet)", section_style))
+        cell_table = Table(cell_data, colWidths=[130, 130, 130, 130])
+        cell_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f2a4a")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
+            ("PADDING", (0, 0), (-1, -1), 4),
+        ]))
+        story.append(cell_table)
+        story.append(Spacer(1, 15))
 
     # Signature / Approval Block
     sig_data = [

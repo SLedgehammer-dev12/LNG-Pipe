@@ -986,7 +986,19 @@ with tab_report:
         "date_str": report_date
     }
     
-    pdf_bytes = generate_pdf_report(sim_results, meta_dict, temp_unit=t_unit, press_unit=p_unit)
+    # Hücre verilerini string'e çevir (PDF tablosu için)
+    pdf_cell_data = []
+    if df_data:
+        headers = list(df_data.keys())
+        n_rows = len(df_data[headers[0]]) if headers else 0
+        pdf_cell_data = [headers]
+        for r in range(n_rows):
+            row = []
+            for h in headers:
+                v = df_data[h][r]
+                row.append(str(v) if isinstance(v, float) else str(v))
+            pdf_cell_data.append(row)
+    pdf_bytes = generate_pdf_report(sim_results, meta_dict, temp_unit=t_unit, press_unit=p_unit, cell_data=pdf_cell_data)
     st.download_button(
         label="📄 Resmi PDF Mühendislik Hesaplama Raporunu İndir",
         data=pdf_bytes,
