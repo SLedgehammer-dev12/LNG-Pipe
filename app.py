@@ -482,9 +482,17 @@ with st.sidebar.expander("❄️ Kriyojenik Akışkan & Kompozisyon", expanded=T
         st.warning("⚠️ Tüm bileşen oranları sıfır. Varsayılan olarak saf metan seçildi.")
         active_composition = {"Methane": 100.0}
 
-    # Display calculated mixture molar mass
-    _fm_preview = FluidManager(fluid_type="pure_methane" if is_pure_methane else "mixture", composition=active_composition)
-    st.caption(f"⚖️ **Karışım Mol Kütlesi (M_mix):** {_fm_preview.mixture_molar_mass_g_mol():.2f} g/mol ({len(active_composition)} bileşen)")
+    # Calculate mixture molar mass Directly from catalog (zero CoolProp overhead)
+    _tot_preview = sum(active_composition.values())
+    _mm_preview = (
+        16.043
+        if is_pure_methane or _tot_preview <= 0.0
+        else sum(
+            (frac / _tot_preview) * float(LNG_COMPONENTS_CATALOG.get(c, {}).get("molar_mass", 16.043))
+            for c, frac in active_composition.items()
+        )
+    )
+    st.caption(f"⚖️ **Karışım Mol Kütlesi (M_mix):** {_mm_preview:.2f} g/mol ({len(active_composition)} bileşen)")
 
     inlet_t_k, t_unit = unit_input(
         "Giriş Sıcaklığı T_in", "temperature", "inlet_t",
@@ -699,6 +707,17 @@ def _m_show(kg_s, unit):
 
 # --- EXECUTE SIMULATION ---
 @st.cache_resource(show_spinner=False, max_entries=32)
+def get_fluid_manager(is_pure: bool, comp_tuple: tuple) -> FluidManager:
+    """Return a shared, cached FluidManager instance with persistent CoolProp AbstractState and property caches."""
+    if is_pure:
+        return FluidManager(fluid_type="pure_methane")
+    raw_comp = dict(comp_tuple)
+    tot = sum(raw_comp.values())
+    norm_comp = {k: v / tot for k, v in raw_comp.items()} if tot > 0 else {"Methane": 1.0}
+    return FluidManager(fluid_type="mixture", composition=norm_comp)
+
+
+@st.cache_resource(show_spinner=False, max_entries=32)
 def run_simulation(
     length, diam, thick, mat_k, rough, incline,
     is_pure, comp_tuple,
@@ -706,13 +725,7 @@ def run_simulation(
     layers_tuple,
     t_amb, wind, use_3d, nr, nt, nz
 ):
-    if is_pure:
-        fm = FluidManager(fluid_type="pure_methane")
-    else:
-        raw_comp = dict(comp_tuple)
-        tot = sum(raw_comp.values())
-        norm_comp = {k: v / tot for k, v in raw_comp.items()} if tot > 0 else {"Methane": 1.0}
-        fm = FluidManager(fluid_type="mixture", composition=norm_comp)
+    fm = get_fluid_manager(is_pure, comp_tuple)
 
     layers = [
         InsulationLayer(name=l_name, thickness_m=l_th / 1000.0, thermal_conductivity=l_k)
@@ -896,12 +909,7 @@ with c5:
     """, unsafe_allow_html=True)
 
 # --- TERMINAL & MECHANICAL INTEGRITY EVALUATION ---
-if is_pure_methane:
-    fm_eval = FluidManager(fluid_type="pure_methane")
-else:
-    tot_c = sum(active_composition.values())
-    norm_c = {k: v / tot_c for k, v in active_composition.items()} if tot_c > 0 else {"Methane": 1.0}
-    fm_eval = FluidManager(fluid_type="mixture", composition=norm_c)
+fm_eval = get_fluid_manager(is_pure_methane, comp_tuple)
 
 latent_heat_val = fm_eval.get_latent_heat(sim_results.pressure_pa[-1])
 rho_avg = sim_results.density_kg_m3[0] if hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0 else 425.0

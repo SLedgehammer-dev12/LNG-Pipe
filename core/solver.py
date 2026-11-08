@@ -184,7 +184,7 @@ class PipelineSolver:
 
                 # Convert enthalpy back to temperature: pinned at Tsat(P) while flashing
                 if margin <= 0.0:
-                    curr_t = max(90.7, self.fm.get_bubble_dew_temperature(curr_p)[0])
+                    curr_t = max(90.7, t_sat)
                 else:
                     curr_t = curr_t + dh / max(props.specific_heat, 100.0)
 

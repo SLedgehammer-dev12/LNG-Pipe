@@ -113,3 +113,26 @@ def test_expanded_coolprop_components_heavy_hc_co2_n2():
     assert 2000.0 < props.specific_heat < 4500.0
     assert props.vapor_pressure > 50000.0
 
+
+def test_preset_compositions_3d_performance_guard():
+    """Guard against CoolProp AbstractState re-instantiation / saturation flash timeouts on multi-component presets."""
+    import time
+    from core.heat_transfer import InsulationLayer, PipeThermalModel
+    from core.solver import PipelineSimulationConfig
+    from core.solver_3d import PipelineSolver3D, Solver3DConfig
+
+    gorgon_heavy = {
+        "Methane": 88.5, "Ethane": 7.8, "Propane": 2.2, "IsoButane": 0.5,
+        "n-Butane": 0.4, "Isopentane": 0.15, "n-Pentane": 0.10, "n-Hexane": 0.05, "Nitrogen": 0.3,
+    }
+    t0 = time.perf_counter()
+    fm = FluidManager(fluid_type="mixture", composition=gorgon_heavy)
+    tm = PipeThermalModel(0.2, 0.006, 15.0, [InsulationLayer("PIR", 0.06, 0.024)], 298.15, 3.0)
+    cfg = PipelineSimulationConfig(300.0, 0.2, 4.5e-5, 0.0, 111.65, 5e5, 40.0, 50)
+    res = PipelineSolver3D(fm, tm, Solver3DConfig(cfg, 12, 12, 50)).solve()
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
+
+    assert res.bulk_temperature_k[-1] > 111.65
+    # Previously ~4,600 ms; with persistent AbstractState must complete well under 300 ms
+    assert elapsed_ms < 300.0, f"Heavy LNG 3D simulation regression: took {elapsed_ms:.1f} ms (> 300 ms)"
+

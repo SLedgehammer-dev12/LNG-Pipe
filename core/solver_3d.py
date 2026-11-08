@@ -213,13 +213,13 @@ class PipelineSolver3D:
             t_center = float(np.mean(slice_t[0, :]))
             t_wall = float(np.mean(slice_t[-1, :]))
 
-            p_sat_bulk = self.fm.get_vapor_pressure(t_bulk)
+            props_station = self.fm.get_properties(t_bulk, curr_p)
+            p_sat_bulk = props_station.vapor_pressure
             p_sat_wall = self.fm.get_vapor_pressure(t_wall)
 
             margin_bulk = curr_p - p_sat_bulk
             margin_wall = curr_p - p_sat_wall
 
-            props_station = self.fm.get_properties(t_bulk, curr_p)
             results.density_kg_m3.append(props_station.density)
 
             results.bulk_temperature_k.append(t_bulk)
@@ -242,7 +242,7 @@ class PipelineSolver3D:
                 h_fg = self.fm.get_latent_heat(curr_p)
                 t_sat, _ = self.fm.get_bubble_dew_temperature(curr_p)
                 delta_t_superheat = max(0.0, t_wall - t_sat)
-                props_bulk = self.fm.get_properties(t_bulk, curr_p)
+                props_bulk = props_station
                 vapor_quality = min(0.99, (props_bulk.specific_heat * delta_t_superheat) / max(h_fg, 1e4))
                 # Saturated vapor density via ideal-gas estimate for Lockhart-Martinelli
                 # (CoolProp call per flashing cell is expensive; ideal gas is accurate
@@ -263,7 +263,7 @@ class PipelineSolver3D:
             results.two_phase_multiplier.append(phi_l_sq)
 
             if k_idx < nz:
-                props = self.fm.get_properties(t_bulk, curr_p)
+                props = props_station
                 q_prime_total, _ = self.thermal_model.calculate_heat_ingress(props, pipe_cfg.mass_flow_rate_kg_s)
                 total_heat_ingress += q_prime_total * dz
 

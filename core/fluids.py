@@ -97,9 +97,20 @@ class FluidManager:
         self._backend_string = self._build_backend_string()
         self._cache: Dict[tuple, FluidProperties] = {}
         self._psat_cache: Dict[float, float] = {}
-        self._psat_t_cache: Dict[float, float] = {}  # Psat by T
         self._h_fg_cache: Dict[float, float] = {}    # Latent heat by P
         self._t_bubble_dew_cache: Dict[float, tuple[float, float]] = {}  # Bubble/dew T by P
+
+        # Persistent CoolProp AbstractState objects (eliminates C++ JSON/BIP re-parsing per axial cell)
+        self._methane_state: Optional[CP.AbstractState] = None
+        self._mix_liq_state: Optional[CP.AbstractState] = None
+        self._mix_sat_state: Optional[CP.AbstractState] = None
+        self._mix_eos_name: Optional[str] = None
+        self._mix_has_viscosity: bool = False
+        self._mix_has_conductivity: bool = False
+        self._sat_flash_supported: bool = True
+        self._pq_flash_supported: bool = True
+        self._molar_mass_g_mol: float = 16.043
+        self._init_persistent_states()
 
     def _build_backend_string(self) -> str:
         total = sum(self.composition.values())
@@ -121,25 +132,83 @@ class FluidManager:
         comp_str = "&".join(f"{comp}[{frac:.6f}]" for comp, frac in norm_map.items() if frac > 0.0)
         return f"HEOS::{comp_str}"
 
+    def _init_persistent_states(self) -> None:
+        """Initialize reusable CoolProp AbstractState backends once per FluidManager."""
+        try:
+            self._methane_state = CP.AbstractState("HEOS", "Methane")
+        except Exception:
+            self._methane_state = None
+
+        # Precompute mixture molar mass once
+        if self.fluid_type == "pure_methane" or not self.normalized_composition:
+            self._molar_mass_g_mol = 16.043
+        else:
+            mm = 0.0
+            for comp, frac in self.normalized_composition.items():
+                entry = LNG_COMPONENTS_CATALOG.get(comp)
+                if entry is not None:
+                    mm += frac * float(entry["molar_mass"])
+                else:
+                    try:
+                        mm += frac * float(CP.PropsSI("M", comp)) * 1000.0
+                    except Exception:
+                        mm += frac * 16.043
+            self._molar_mass_g_mol = max(mm, 2.0)
+
+        comps = [c for c, f in self.normalized_composition.items() if f > 0.0]
+        fracs = [self.normalized_composition[c] for c in comps]
+        if self.fluid_type == "pure_methane" or len(comps) <= 1:
+            return
+
+        fluid_join = "&".join(comps)
+        # Probe HEOS -> SRK -> PR once at typical cryogenic liquid state (112 K, 5 bar)
+        for eos_name in ("HEOS", "SRK", "PR"):
+            try:
+                st = CP.AbstractState(eos_name, fluid_join)
+                st.set_mole_fractions(fracs)
+                st.specify_phase(CP.iphase_liquid)
+                st.update(CP.PT_INPUTS, 500000.0, 112.0)
+                rho = float(st.rhomass())
+                cp = float(st.cpmass())
+                h = float(st.hmass())
+                if math.isfinite(rho) and math.isfinite(cp) and math.isfinite(h) and rho > 350.0 and cp > 500.0:
+                    self._mix_liq_state = st
+                    self._mix_eos_name = eos_name
+                    try:
+                        mu = float(st.viscosity())
+                        self._mix_has_viscosity = math.isfinite(mu) and mu > 0.0
+                    except Exception:
+                        self._mix_has_viscosity = False
+                    try:
+                        k = float(st.conductivity())
+                        self._mix_has_conductivity = math.isfinite(k) and k > 0.0
+                    except Exception:
+                        self._mix_has_conductivity = False
+                    break
+            except Exception:
+                continue
+
+        # Multi-component QT/PQ saturation flashes in HEOS only converge reliably for simple <=4-comp C1-C3/N2 mixtures
+        _fast_sat_comps = {"Methane", "Ethane", "Propane", "Nitrogen"}
+        if self._mix_eos_name == "HEOS" and len(comps) <= 4 and all(c in _fast_sat_comps for c in comps):
+            try:
+                sat_st = CP.AbstractState("HEOS", fluid_join)
+                sat_st.set_mole_fractions(fracs)
+                self._mix_sat_state = sat_st
+            except Exception:
+                self._sat_flash_supported = False
+                self._pq_flash_supported = False
+        else:
+            self._sat_flash_supported = False
+            self._pq_flash_supported = False
+
     def composition_sum(self) -> float:
         """Returns the sum of composition mole fractions (should be ~100 for % inputs, ~1.0 for fractions)."""
         return sum(self.composition.values())
 
     def mixture_molar_mass_g_mol(self) -> float:
-        """Calculate mixture molar mass (g/mol) from normalized mole fractions."""
-        if self.fluid_type == "pure_methane" or not self.normalized_composition:
-            return 16.043
-        mm = 0.0
-        for comp, frac in self.normalized_composition.items():
-            entry = LNG_COMPONENTS_CATALOG.get(comp)
-            if entry is not None:
-                mm += frac * float(entry["molar_mass"])
-            else:
-                try:
-                    mm += frac * float(CP.PropsSI("M", comp)) * 1000.0
-                except Exception:
-                    mm += frac * 16.043
-        return max(mm, 2.0)
+        """Return precomputed mixture molar mass (g/mol) from normalized mole fractions."""
+        return self._molar_mass_g_mol
 
     def get_npsh_margin_a(self, T: float, P: float) -> float:
         """
@@ -161,27 +230,33 @@ class FluidManager:
             return self._psat_cache[cache_key]
         try:
             if "HEOS::" in self._backend_string:
-                # Bubble point pressure for mixture
-                p_b = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, self._backend_string))
+                if not self._sat_flash_supported or self._mix_sat_state is None:
+                    raise ValueError("Use analytical mixture bubble-point model")
+                self._mix_sat_state.update(CP.QT_INPUTS, 0.0, T_clamped)
+                p_b = float(self._mix_sat_state.p())
                 if math.isfinite(p_b) and 1000.0 < p_b < 1.5e7:
-                    self._psat_cache[cache_key] = p_b
                     self._psat_cache[cache_key] = p_b
                     return p_b
                 raise ValueError("Invalid mixture Psat from CoolProp")
             else:
-                p_m = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, "Methane"))
+                if self._methane_state is not None:
+                    self._methane_state.specify_phase(CP.iphase_not_imposed)
+                    self._methane_state.update(CP.QT_INPUTS, 0.0, T_clamped)
+                    p_m = float(self._methane_state.p())
+                else:
+                    p_m = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, "Methane"))
                 if math.isfinite(p_m) and p_m > 0.0:
-                    self._psat_cache[cache_key] = p_m
                     self._psat_cache[cache_key] = p_m
                     return p_m
                 raise ValueError("Invalid Methane Psat")
         except Exception:
+            if "HEOS::" in self._backend_string:
+                self._sat_flash_supported = False
             # Robust Antoine / Wagner fallback for methane + Raoult/volatility mixture correction
             Tc = 190.564  # K
             Pc = 4599200.0  # Pa
             tau = 1.0 - (T_clamped / Tc)
             if tau <= 0:
-                self._psat_cache[cache_key] = Pc
                 self._psat_cache[cache_key] = Pc
                 return Pc
             a1, a2, a3, a4 = -6.02242, 1.26652, -0.5707, -1.366
@@ -196,54 +271,60 @@ class FluidManager:
                         vol_shift += frac * float(entry["volatility_factor"])
                 p_sat *= max(0.15, 1.0 + vol_shift)
             self._psat_cache[cache_key] = p_sat
-            self._psat_cache[cache_key] = p_sat
             return p_sat
 
-    def _evaluate_liquid_mixture_abstract_state(self, T_val: float, P_val: float) -> Optional[tuple[float, float, float, float, float]]:
-        """Evaluate liquid mixture via CoolProp AbstractState (HEOS -> SRK -> PR) with iphase_liquid."""
-        comps = [c for c, f in self.normalized_composition.items() if f > 0.0]
-        fracs = [self.normalized_composition[c] for c in comps]
-        if len(comps) <= 1:
-            return None
-        fluid_join = "&".join(comps)
-        for eos_name in ("HEOS", "SRK", "PR"):
+    def _evaluate_methane_transport(self, T_val: float, P_val: float) -> tuple[float, float]:
+        """Fast pure-methane viscosity and thermal conductivity via persistent AbstractState."""
+        if self._methane_state is not None:
             try:
-                st = CP.AbstractState(eos_name, fluid_join)
-                st.set_mole_fractions(fracs)
                 if T_val < 175.0 and P_val >= 80000.0:
-                    st.specify_phase(CP.iphase_liquid)
-                st.update(CP.PT_INPUTS, P_val, T_val)
-                rho = float(st.rhomass())
-                cp = float(st.cpmass())
-                h = float(st.hmass())
-                if not (math.isfinite(rho) and math.isfinite(cp) and math.isfinite(h) and rho > 50.0 and cp > 500.0):
-                    continue
-                try:
-                    mu = float(st.viscosity())
-                    if not math.isfinite(mu) or mu <= 0.0:
-                        raise ValueError()
-                except Exception:
-                    mu = float(CP.PropsSI("V", "T", T_val, "P", P_val, "Methane")) * math.sqrt(self.mixture_molar_mass_g_mol() / 16.043)
-                try:
-                    k = float(st.conductivity())
-                    if not math.isfinite(k) or k <= 0.0:
-                        raise ValueError()
-                except Exception:
-                    k = float(CP.PropsSI("L", "T", T_val, "P", P_val, "Methane"))
-                return rho, cp, mu, k, h
+                    self._methane_state.specify_phase(CP.iphase_liquid)
+                else:
+                    self._methane_state.specify_phase(CP.iphase_not_imposed)
+                self._methane_state.update(CP.PT_INPUTS, P_val, T_val)
+                return float(self._methane_state.viscosity()), float(self._methane_state.conductivity())
             except Exception:
-                continue
-        return None
+                pass
+        return 1.15e-4, 0.185
+
+    def _evaluate_liquid_mixture_abstract_state(self, T_val: float, P_val: float) -> Optional[tuple[float, float, float, float, float]]:
+        """Evaluate liquid mixture via persistent CoolProp AbstractState (1 flash instead of re-instantiating)."""
+        st = self._mix_liq_state
+        if st is None:
+            return None
+        try:
+            if T_val < 175.0 and P_val >= 80000.0:
+                st.specify_phase(CP.iphase_liquid)
+            else:
+                st.specify_phase(CP.iphase_not_imposed)
+            st.update(CP.PT_INPUTS, P_val, T_val)
+            rho = float(st.rhomass())
+            cp = float(st.cpmass())
+            h = float(st.hmass())
+            if not (math.isfinite(rho) and math.isfinite(cp) and math.isfinite(h) and rho > 50.0 and cp > 500.0):
+                return None
+            mu_m, k_m = (0.0, 0.0)
+            if not (self._mix_has_viscosity and self._mix_has_conductivity):
+                mu_m, k_m = self._evaluate_methane_transport(T_val, P_val)
+            if self._mix_has_viscosity:
+                mu = float(st.viscosity())
+            else:
+                mu = mu_m * math.sqrt(self._molar_mass_g_mol / 16.043)
+            if self._mix_has_conductivity:
+                k = float(st.conductivity())
+            else:
+                k = k_m
+            return rho, cp, mu, k, h
+        except Exception:
+            return None
 
     def get_properties(self, T: float, P: float) -> FluidProperties:
         """
         Evaluate real fluid properties at temperature T (K) and pressure P (Pa).
-        Uses quantized caching for fast finite-volume integration.
+        Uses persistent AbstractState and quantized caching for fast finite-volume integration.
         """
-        # Cache key rounded to 0.1 K and 100 Pa for mixture performance.
-        # Cryogenic LNG temperature changes slowly along pipe (<0.5 K/cell typical),
-        # so coarser K key increases cache hits without accuracy loss.
-        cache_key = (round(T, 1), round(P, -2))
+        # Cache key rounded to 0.05 K and 2,000 Pa (0.02 bar) for high hit rate without enthalpy drift.
+        cache_key = (round(T * 20.0) / 20.0, round(P, -3))
         if cache_key in self._cache:
             return self._cache[cache_key]
 
@@ -253,44 +334,64 @@ class FluidManager:
         P_val = max(5000.0, P)  # above triple-point pressure; small epsilon for division safety
 
         backend = self._backend_string
-        mm_mix = self.mixture_molar_mass_g_mol()
+        mm_mix = self._molar_mass_g_mol
         try:
-            rho = float(CP.PropsSI("D", "T", T_val, "P", P_val, backend))
-            cp = float(CP.PropsSI("C", "T", T_val, "P", P_val, backend))
-            mu = float(CP.PropsSI("V", "T", T_val, "P", P_val, backend))
-            k = float(CP.PropsSI("L", "T", T_val, "P", P_val, backend))
-            h = float(CP.PropsSI("H", "T", T_val, "P", P_val, backend))
-            # Validate CoolProp output is finite and physically consistent for liquid mixtures
-            if not all(math.isfinite(v) for v in (rho, cp, mu, k, h)):
-                raise ValueError("CoolProp returned non-finite value")
-            if "HEOS::" in backend and T_val < 135.0 and P_val > 1.5e5 and rho < 380.0 and mm_mix >= 16.0:
-                # CoolProp un-phased HEOS flash hit spinodal root for heavy component; refine with phased AbstractState
-                raise ValueError("Un-phased mixture root below cryogenic liquid density threshold")
-        except Exception:
-            phased = self._evaluate_liquid_mixture_abstract_state(T_val, P_val) if "HEOS::" in backend else None
-            if phased is not None:
+            if "HEOS::" in backend:
+                phased = self._evaluate_liquid_mixture_abstract_state(T_val, P_val)
+                if phased is None:
+                    raise ValueError("Mixture AbstractState evaluation failed")
                 rho, cp, mu, k, h = phased
+            elif self._methane_state is not None:
+                self._methane_state.specify_phase(CP.iphase_not_imposed)
+                self._methane_state.update(CP.PT_INPUTS, P_val, T_val)
+                rho = float(self._methane_state.rhomass())
+                cp = float(self._methane_state.cpmass())
+                mu = float(self._methane_state.viscosity())
+                k = float(self._methane_state.conductivity())
+                h = float(self._methane_state.hmass())
+                if not all(math.isfinite(v) for v in (rho, cp, mu, k, h)):
+                    raise ValueError("CoolProp returned non-finite value")
             else:
-                # Fallback to pure methane scaled by full 28-component molar mass
-                try:
+                rho = float(CP.PropsSI("D", "T", T_val, "P", P_val, backend))
+                cp = float(CP.PropsSI("C", "T", T_val, "P", P_val, backend))
+                mu = float(CP.PropsSI("V", "T", T_val, "P", P_val, backend))
+                k = float(CP.PropsSI("L", "T", T_val, "P", P_val, backend))
+                h = float(CP.PropsSI("H", "T", T_val, "P", P_val, backend))
+                if not all(math.isfinite(v) for v in (rho, cp, mu, k, h)):
+                    raise ValueError("CoolProp returned non-finite value")
+        except Exception:
+            # Fallback to pure methane scaled by full 28-component molar mass
+            try:
+                if self._methane_state is not None:
+                    if T_val < 175.0 and P_val >= 80000.0:
+                        self._methane_state.specify_phase(CP.iphase_liquid)
+                    else:
+                        self._methane_state.specify_phase(CP.iphase_not_imposed)
+                    self._methane_state.update(CP.PT_INPUTS, P_val, T_val)
+                    rho = float(self._methane_state.rhomass())
+                    cp = float(self._methane_state.cpmass())
+                    mu = float(self._methane_state.viscosity())
+                    k = float(self._methane_state.conductivity())
+                    h = float(self._methane_state.hmass())
+                else:
                     rho = float(CP.PropsSI("D", "T", T_val, "P", P_val, "Methane"))
                     cp = float(CP.PropsSI("C", "T", T_val, "P", P_val, "Methane"))
                     mu = float(CP.PropsSI("V", "T", T_val, "P", P_val, "Methane"))
                     k = float(CP.PropsSI("L", "T", T_val, "P", P_val, "Methane"))
                     h = float(CP.PropsSI("H", "T", T_val, "P", P_val, "Methane"))
-                    if self.fluid_type != "pure_methane":
-                        ratio = mm_mix / 16.043
-                        rho *= (1.0 + 0.55 * (ratio - 1.0))
-                        cp /= (1.0 + 0.25 * (ratio - 1.0))
-                        mu *= math.sqrt(max(ratio, 0.2))
-                except Exception:
-                    # Liquid methane physical correlations (near 112 K)
-                    ratio = mm_mix / 16.043 if self.fluid_type != "pure_methane" else 1.0
-                    rho = (422.6 - 1.45 * (T_val - 111.66)) * (1.0 + 0.55 * (ratio - 1.0))
-                    cp = 3480.0 / (1.0 + 0.25 * (ratio - 1.0))
-                    mu = 1.15e-4 * math.sqrt(max(ratio, 0.2))
-                    k = 0.185
-                    h = 0.0
+                if self.fluid_type != "pure_methane":
+                    ratio = mm_mix / 16.043
+                    rho *= (1.0 + 0.55 * (ratio - 1.0))
+                    cp /= (1.0 + 0.25 * (ratio - 1.0))
+                    mu *= math.sqrt(max(ratio, 0.2))
+            except Exception:
+                # Liquid methane physical correlations (near 112 K)
+                ratio = mm_mix / 16.043 if self.fluid_type != "pure_methane" else 1.0
+                rho = (422.6 - 1.45 * (T_val - 111.66)) * (1.0 + 0.55 * (ratio - 1.0))
+                cp = 3480.0 / (1.0 + 0.25 * (ratio - 1.0))
+                mu = 1.15e-4 * math.sqrt(max(ratio, 0.2))
+                k = 0.185
+                h = 0.0
 
         p_sat = self.get_vapor_pressure(T_val)
 
@@ -314,14 +415,29 @@ class FluidManager:
         if cache_key in self._h_fg_cache:
             return self._h_fg_cache[cache_key]
         try:
-            h_liq = float(CP.PropsSI("H", "P", P_clamped, "Q", 0, self._backend_string))
-            h_vap = float(CP.PropsSI("H", "P", P_clamped, "Q", 1, self._backend_string))
+            if "HEOS::" in self._backend_string:
+                if not self._pq_flash_supported or self._mix_sat_state is None:
+                    raise ValueError("Use Watson latent heat correlation")
+                self._mix_sat_state.update(CP.PQ_INPUTS, P_clamped, 0.0)
+                h_liq = float(self._mix_sat_state.hmass())
+                self._mix_sat_state.update(CP.PQ_INPUTS, P_clamped, 1.0)
+                h_vap = float(self._mix_sat_state.hmass())
+            elif self._methane_state is not None:
+                self._methane_state.specify_phase(CP.iphase_not_imposed)
+                self._methane_state.update(CP.PQ_INPUTS, P_clamped, 0.0)
+                h_liq = float(self._methane_state.hmass())
+                self._methane_state.update(CP.PQ_INPUTS, P_clamped, 1.0)
+                h_vap = float(self._methane_state.hmass())
+            else:
+                h_liq = float(CP.PropsSI("H", "P", P_clamped, "Q", 0, self._backend_string))
+                h_vap = float(CP.PropsSI("H", "P", P_clamped, "Q", 1, self._backend_string))
             diff = h_vap - h_liq
             if diff > 100000.0:
                 self._h_fg_cache[cache_key] = float(diff)
                 return float(diff)
         except Exception:
-            pass
+            if "HEOS::" in self._backend_string:
+                self._pq_flash_supported = False
 
         # Robust Watson correlation fallback for methane/LNG
         Tc = 190.56
@@ -338,17 +454,36 @@ class FluidManager:
         if cache_key in self._t_bubble_dew_cache:
             return self._t_bubble_dew_cache[cache_key]
         try:
-            t_bubble = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, self._backend_string))
-            t_dew = float(CP.PropsSI("T", "P", P_clamped, "Q", 1, self._backend_string))
+            if "HEOS::" in self._backend_string:
+                if not self._pq_flash_supported or self._mix_sat_state is None:
+                    raise ValueError("Use analytical saturation temperature")
+                self._mix_sat_state.update(CP.PQ_INPUTS, P_clamped, 0.0)
+                t_bubble = float(self._mix_sat_state.T())
+                self._mix_sat_state.update(CP.PQ_INPUTS, P_clamped, 1.0)
+                t_dew = float(self._mix_sat_state.T())
+            elif self._methane_state is not None:
+                self._methane_state.specify_phase(CP.iphase_not_imposed)
+                self._methane_state.update(CP.PQ_INPUTS, P_clamped, 0.0)
+                t_bubble = float(self._methane_state.T())
+                t_dew = t_bubble
+            else:
+                t_bubble = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, self._backend_string))
+                t_dew = float(CP.PropsSI("T", "P", P_clamped, "Q", 1, self._backend_string))
             if math.isnan(t_bubble) or math.isnan(t_dew):
                 raise ValueError("CoolProp returned NaN")
             self._t_bubble_dew_cache[cache_key] = (float(t_bubble), float(t_dew))
             return float(t_bubble), float(t_dew)
         except Exception:
-            pass
+            if "HEOS::" in self._backend_string:
+                self._pq_flash_supported = False
 
         try:
-            t_sat = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, "Methane"))
+            if self._methane_state is not None:
+                self._methane_state.specify_phase(CP.iphase_not_imposed)
+                self._methane_state.update(CP.PQ_INPUTS, P_clamped, 0.0)
+                t_sat = float(self._methane_state.T())
+            else:
+                t_sat = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, "Methane"))
         except Exception:
             t_sat = 111.66 * ((P_clamped / 101325.0) ** 0.11)
 
