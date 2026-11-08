@@ -269,7 +269,50 @@ def generate_pdf_report(
         ("PADDING", (0, 0), (-1, -1), 5),
     ]))
     story.append(terminal_table)
-    story.append(Spacer(1, 15))
+    story.append(Spacer(1, 8))
+
+    # Informative Standard & Engineering Basis Note
+    info_header_style = ParagraphStyle(
+        "InfoNoteHeader",
+        parent=bold_style,
+        fontSize=8.5,
+        textColor=colors.HexColor("#0f2a4a"),
+        spaceAfter=3,
+    )
+    info_text_style = ParagraphStyle(
+        "InfoNoteText",
+        parent=body_style,
+        fontSize=7.5,
+        leading=10,
+        textColor=colors.HexColor("#333333"),
+    )
+    note_content = [
+        [
+            Paragraph("<b>Standartlar & Mühendislik Tasarım Dayanağı (NFPA 59A vs. EN 1473 / SIGTTO / GIIGNL):</b>", info_header_style)
+        ],
+        [
+            Paragraph(
+                "• <b>NFPA 59A & ASME B31.3 Şartları (Performans Esaslı):</b> NFPA 59A (Bölüm 9 & 11) doğrudan sabit bir sayısal ΔT sınırı dikte etmez; "
+                "kriyojenik hatlarda iki fazlı kaynama (flashing), buhar tıkanması (vapor lock) ve dolfen mesnetlerinde "
+                "termal tabakalaşma kaynaklı boru eğilmesi (thermal bowing) gerilmelerinin önlenmesini şart koşar.<br/>"
+                "• <b>EN 1473 & SIGTTO Pratiği (ΔT ≤ 1.5 K):</b> Clausius-Clapeyron bağıntısı uyarınca her 1.0 K ısınma doyma buhar basıncını "
+                "~0.12 bar artırdığından, iskele ve dönüş kolunda kavitasyon/gayzer riskini önleyip pozitif aşırı soğutma marjını (P - Psat ≥ 0.5 bar) korumak için "
+                "soğuk tutma devresi endüstride tipik olarak ΔT ≤ 1.0 - 2.0 K (baz tasarım 1.5 K) kriteriyle boyutlandırılır.<br/>"
+                "• <b>Kara Tankı Isı Kazancı (Q_tank) ve Kontrol Hacmi:</b> Kara tankı doyma basıncında tutulduğu için boru içindeki sıvıyı ısıtmaz; "
+                "yüzeyde buharlaşarak tank BOG kompresörlerine gider. Toplam Terminal BOG kompresör bütçesi ise tank ısı kazancı, "
+                "boru devresi ısı kazancı ve pompa şaft ısısının (Q_tank + Q_hat + Q_pompa) toplamı olarak boyutlandırılır.",
+                info_text_style,
+            )
+        ],
+    ]
+    note_table = Table(note_content, colWidths=[520])
+    note_table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#f0f4f8")),
+        ("BOX", (0, 0), (-1, -1), 0.5, colors.HexColor("#b8c7d9")),
+        ("PADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(note_table)
+    story.append(Spacer(1, 10))
 
     # 5. Dilim Bazlı Veriler (Özet)
     if cell_data:

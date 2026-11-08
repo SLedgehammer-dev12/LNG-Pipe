@@ -379,7 +379,13 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
         max_value=5.0,
         value=1.5,
         step=0.1,
-        help="EN 1473 / SIGTTO: Sirkülasyon devresinde iki fazlı flaş ve termal tabakalaşmayı (stratification/bowing) önlemek için standart 1.0 - 2.0 K (varsayılan 1.5 K) alınır.",
+        help=(
+            "NFPA 59A & ASME B31.3 doğrudan sayısal bir ΔT sınırı koymaz; performans kriteri olarak iki fazlı kaynama (flashing) "
+            "ve termal tabakalaşma kaynaklı boru eğilmesi (thermal bowing) gerilmelerinin önlenmesini şart koşar. "
+            "EN 1473, SIGTTO ve GIIGNL operasyonel standartlarında hat sonundaki yerel doyma basıncı artışını "
+            "(Clausius-Clapeyron: ~0.12 bar/K) ve kavitasyon/gayzer riskini önlemek için standart tasarım kriteri "
+            "1.0 - 2.0 K (varsayılan 1.5 K) alınır."
+        ),
     )
 
 # Initialize session state for multi-component composition and multi-layer insulation
@@ -1010,6 +1016,22 @@ with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama"
             f"- **P-201 Pompa Şaft Isısı ($\\dot{{Q}}_{{pompa}}$):** {q_pump_kw:.2f} kW\n"
             f"- **Toplam Terminal BOG Kompresör Yükü:** **{terminal_ops.total_terminal_bog_kg_h:.1f} kg/h** ({terminal_ops.total_terminal_bog_nm3_h:.0f} Nm³/h)"
         )
+
+    with st.expander("ℹ️ Mühendislik ve Standartlar Bilgilendirme Notu (NFPA 59A vs. EN 1473 / SIGTTO / GIIGNL)", expanded=False):
+        st.markdown("""
+        **1. NFPA 59A Standart Yaklaşımı (Performans Tabanlı Kriter):**
+        - **NFPA 59A** (*Chapter 9 & 11*) ve **ASME B31.3** (*Para. 301.5 & 319*), sirkülasyon hatlarında doğrudan sabit bir sayısal $\\Delta T$ sınırı (örneğin $\\le 1.5\\text{ K}$) dikte etmez.
+        - Standart, **performans ve güvenlik hedefini** şart koşar: Boru hattında iki fazlı kaynama (*flashing*), buhar tıkanması (*vapor lock / geysering*), yoğuşma kaynaklı koç darbesi (*condensation-induced water hammer*) ve üst/alt lifler arasındaki sıcaklık farkından kaynaklanan **termal tabakalaşma / boru eğilmesi gerilmeleri (*thermal bowing stresses*)** kesinlikle önlenmelidir.
+
+        **2. EN 1473, SIGTTO ve GIIGNL Neden $\\Delta T \\le 1.0 - 2.0\\text{ K}$ (Baz $1.5\\text{ K}$) Kullanır?**
+        - **Clausius-Clapeyron Bağıntısı:** Kriyojenik sıcaklıkta ($-161.5\\ ^\\circ\\text{C}$), her $1.0\\text{ K}$ ısınma doyma buhar basıncını ($P_{\\text{sat}}$) $\\approx 0.11 - 0.13\\text{ bar}$ artırır.
+        - Sirkülasyon devresinin en düşük basınç noktası olan iskele dönüş kolunda pozitif aşırı soğutma marjını ($P - P_{\\text{sat}} \\ge 0.5\\text{ bar}$) korumak için endüstriyel proses tasarımında izin verilen ısınma $\\Delta T_{\\text{izin}} = 1.5\\text{ K}$ olarak alınır.
+        - Richardson sayısı kriteri ($\\text{Ri} < 1$) korunarak borunun dolfenler üzerinde muz gibi yukarı kamburlaşması (*bowing*) engellenir.
+
+        **3. Kara LNG Depolama Tankı Isı Kazancı ($\\dot{Q}_{\\text{tank}}$) Neden Ayrı Modellenir?**
+        - **Boru İçi Sıvı Isınması Açısından:** Kara tankı $\\approx 1.10 - 1.15\\text{ bar (abs)}$ sabit basınçta doyma dengesinde tutulur; tank duvarlarından giren ısı sıvıyı ısıtmak yerine tank yüzeyinde doğrudan buharlaşmaya harcanır ve BOG kompresörlerine gider. Boru hattına giren LNG doyma sıcaklığında kalır.
+        - **Terminal BOG Bütçesi Açısından:** Ancak tüm terminalin BOG kompresör ve yeniden sıvılaştırma (*reliquefaction*) tesis kapasitesi belirlenirken; tank ısı kazancı ($\\dot{Q}_{\\text{tank}}$), boru devresi ısı kazancı ($\\dot{Q}_{\\text{hat}}$) ve sirkülasyon pompası şaft ısısı ($\\dot{Q}_{\\text{pompa}}$) toplanarak hesaplanmalıdır.
+        """)
 
 # --- VIEW TABS ---
 tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([
