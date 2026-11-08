@@ -193,4 +193,20 @@ def test_bog_and_flare_line_and_flare_stack_in_2d_and_3d(sample_simulation_resul
     assert "Flare Tahliye Hattı" in html_2d
 
 
+def test_fmc_jla_pantograph_marine_loading_arms_and_ship_manifold(sample_simulation_results):
+    html_3d = generate_terminal_3d_html(sample_simulation_results, length_m=500.0)
+    assert "createFMCLoadingArm" in html_3d
+    assert "mlaSpecs" in html_3d
+    assert "MLA-3 (BOG Buhar Dönüş)" in html_3d
+    assert "primaryCW" in html_3d
+    assert "secondaryCW" in html_3d
+    assert "mainSheave" in html_3d
+    assert "apexSheave" in html_3d
+    assert "percCollar" in html_3d
+    assert "qcdcClaw" in html_3d
+    assert "dripTray" in html_3d
+    assert "buildShipManifoldAndLUPControlTower" in html_3d
+
+
+
 

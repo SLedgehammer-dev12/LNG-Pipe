@@ -1033,47 +1033,357 @@ def generate_terminal_3d_html(
       createMooringHawser(qrhPos, chockPos, sag);
     }});
 
-    // Marine Loading Arms (MLAs): LUP dolphin outer edge (-133) -> vessel manifold (-149)
-    for (let i = 0; i < 4; i++) {{
+    // Realistic FMC Chiksan / JLA Double-Counterweighted Pantograph Cryogenic Marine Loading Arms (MLAs)
+    // Connecting LUP Dolphin Riser Standposts (x = -132.2) to Ship Midship Cargo Manifold Flanges (x = -149.2)
+    const mlaStructYellowMat = new THREE.MeshStandardMaterial({{ color: 0xeab308, roughness: 0.35, metalness: 0.45 }});
+    const mlaCryoWhiteMat = new THREE.MeshStandardMaterial({{ color: 0xf1f5f9, roughness: 0.3, metalness: 0.25 }});
+    const mlaSwivelSteelMat = new THREE.MeshStandardMaterial({{ color: 0x94a3b8, roughness: 0.28, metalness: 0.85 }});
+    const mlaCounterweightMat = new THREE.MeshStandardMaterial({{ color: 0xd97706, roughness: 0.45, metalness: 0.5 }});
+    const mlaVaporBandMat = new THREE.MeshStandardMaterial({{ color: 0x38bdf8, roughness: 0.3, metalness: 0.4 }});
+    const mlaLiquidBandMat = new THREE.MeshStandardMaterial({{ color: 0x0284c7, roughness: 0.3, metalness: 0.4 }});
+
+    // Helper: create cylinder or box link exactly connecting point A to point B
+    function createMemberBetween(pA, pB, radius, mat, isBox = false) {{
+      const dir = new THREE.Vector3().subVectors(pB, pA);
+      const len = dir.length();
+      const mid = new THREE.Vector3().addVectors(pA, pB).multiplyScalar(0.5);
+      const geo = isBox
+        ? new THREE.BoxGeometry(radius * 1.9, len, radius * 1.5)
+        : new THREE.CylinderGeometry(radius, radius, len, 14);
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.position.copy(mid);
+      mesh.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir.clone().normalize());
+      mesh.castShadow = true;
+      return mesh;
+    }}
+
+    const mlaSpecs = [
+      {{ code: "MLA-1 (Sıvı LNG)", z: -13.5, isVapor: false }},
+      {{ code: "MLA-2 (Sıvı LNG)", z:  -4.5, isVapor: false }},
+      {{ code: "MLA-3 (BOG Buhar Dönüş)", z:   4.5, isVapor: true  }},
+      {{ code: "MLA-4 (Hibrit / Sirkülasyon)", z:  13.5, isVapor: false }}
+    ];
+
+    function createFMCLoadingArm(spec) {{
       const armGroup = new THREE.Group();
-      const zOffset = -15 + i * 10;
+      const z = spec.z;
+      const serviceMat = spec.isVapor ? mlaVaporBandMat : mlaLiquidBandMat;
 
-      // Base pedestal on LUP deck outer edge (toward vessel)
-      const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 5, 16), steelMat);
-      ped.position.set(-133, 14.5, zOffset);
-      armGroup.add(ped);
+      // Key kinematic joint coordinates (in world space) for FMC / JLA Pantograph Arm:
+      const standX = -132.2;
+      const deckY = 12.0;
+      const trunnionY = 21.6;
+      const trunnionPos = new THREE.Vector3(standX, trunnionY, z);
+      const apexPos     = new THREE.Vector3(-139.2, 28.4, z);
+      const dropTopPos  = new THREE.Vector3(-148.0, 20.2, z);
+      const percPos     = new THREE.Vector3(-148.0, 17.8, z);
+      const qcdcPos     = new THREE.Vector3(-148.0, 16.3, z);
+      const shipFlangePos = new THREE.Vector3(-149.3, 16.3, z);
 
-      // Inboard arm (rises from pedestal)
-      const inArm = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 11, 12), yellowMat);
-      inArm.position.set(-133, 20, zOffset);
-      inArm.rotation.z = 0.35;
-      armGroup.add(inArm);
+      // 1. Heavy Bolted Base Flange & Gusseted Riser Standpost Column (Standpost + Internal Cryo Riser)
+      const baseFlange = new THREE.Mesh(new THREE.CylinderGeometry(1.55, 1.75, 0.65, 20), steelMat);
+      baseFlange.position.set(standX, deckY + 0.32, z);
+      armGroup.add(baseFlange);
 
-      // Outboard arm reaching across to vessel manifold on jetty side
-      const outArm = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 17, 12), yellowMat);
-      outArm.position.set(-141, 21, zOffset);
-      outArm.rotation.z = -0.52;
-      armGroup.add(outArm);
+      // Main structural standpost column (FMC Yellow)
+      const standPost = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.72, 0.88, trunnionY - deckY, 18),
+        mlaStructYellowMat
+      );
+      standPost.position.set(standX, (deckY + trunnionY) / 2.0, z);
+      standPost.castShadow = true;
+      armGroup.add(standPost);
 
-      // Connecting nozzle at vessel manifold (ship jetty-facing side x = -149)
-      const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 5, 12), steelMat);
-      nozzle.position.set(-149, 15, zOffset);
-      nozzle.rotation.z = Math.PI / 2;
-      armGroup.add(nozzle);
+      // Parallel insulated Stainless 316L Cryogenic Product Riser Pipe alongside standpost
+      const cryoRiser = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.42, 0.42, trunnionY - deckY + 0.5, 16),
+        mlaCryoWhiteMat
+      );
+      cryoRiser.position.set(standX, (deckY + trunnionY) / 2.0, z + 0.85);
+      cryoRiser.castShadow = true;
+      armGroup.add(cryoRiser);
+
+      // Service identification color band on riser (Blue = Liquid LNG, Cyan = BOG Vapor)
+      const riserBand = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.78, 1.2, 18), serviceMat);
+      riserBand.position.set(standX, deckY + 4.8, z);
+      armGroup.add(riserBand);
+
+      // Upper Trunnion Service Platform & Caged Access Ladder on Standpost
+      const srvPlat = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.25, 3.2), steelMat);
+      srvPlat.position.set(standX, trunnionY - 1.4, z);
+      armGroup.add(srvPlat);
+      const srvRail = new THREE.LineSegments(
+        new THREE.EdgesGeometry(new THREE.BoxGeometry(3.1, 1.1, 3.1)),
+        new THREE.LineBasicMaterial({{ color: 0xeab308 }})
+      );
+      srvRail.position.set(standX, trunnionY - 0.75, z);
+      armGroup.add(srvRail);
+
+      // 2. Trunnion Double Swivel Joint Assembly & Pantograph Main Sheave Wheel
+      const trunnionHousing = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 2.4, 20), mlaSwivelSteelMat);
+      trunnionHousing.rotation.x = Math.PI / 2;
+      trunnionHousing.position.copy(trunnionPos);
+      armGroup.add(trunnionHousing);
+
+      const mainSheave = new THREE.Mesh(new THREE.CylinderGeometry(1.35, 1.35, 0.38, 24), mlaStructYellowMat);
+      mainSheave.rotation.x = Math.PI / 2;
+      mainSheave.position.set(standX, trunnionY, z - 0.95);
+      armGroup.add(mainSheave);
+
+      // 3.FMC / JLA DOUBLE COUNTERWEIGHT SYSTEM (Primary & Secondary Pantograph Counterweights extending +x)
+      const cwTailPrimary = new THREE.Vector3(standX + 5.8, trunnionY - 3.6, z);
+      const cwTailSecondary = new THREE.Vector3(standX + 4.6, trunnionY + 2.2, z - 0.95);
+
+      // Twin structural tail boom beams for Primary Counterweight (balances Inboard Arm)
+      [-0.55, 0.55].forEach(dz => {{
+        const beam = createMemberBetween(
+          new THREE.Vector3(standX, trunnionY, z + dz),
+          new THREE.Vector3(cwTailPrimary.x, cwTailPrimary.y, z + dz),
+          0.22,
+          mlaStructYellowMat,
+          true
+        );
+        armGroup.add(beam);
+      }});
+
+      // Heavy Primary Counterweight Block (Orange/Yellow with dark iron plates)
+      const primaryCW = new THREE.Mesh(new THREE.BoxGeometry(2.6, 2.2, 2.4), mlaCounterweightMat);
+      primaryCW.position.copy(cwTailPrimary);
+      primaryCW.castShadow = true;
+      armGroup.add(primaryCW);
+      const primaryCWCap = new THREE.Mesh(new THREE.BoxGeometry(2.7, 0.45, 2.5), redValveMat);
+      primaryCWCap.position.set(cwTailPrimary.x, cwTailPrimary.y + 0.95, cwTailPrimary.z);
+      armGroup.add(primaryCWCap);
+
+      // Secondary Pantograph Counterweight Boom & Drum (balances Outboard Arm via pantograph linkage)
+      const secBeam = createMemberBetween(
+        new THREE.Vector3(standX, trunnionY, z - 0.95),
+        cwTailSecondary,
+        0.18,
+        mlaStructYellowMat,
+        true
+      );
+      armGroup.add(secBeam);
+      const secondaryCW = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 1.8, 18), redValveMat);
+      secondaryCW.rotation.x = Math.PI / 2;
+      secondaryCW.position.copy(cwTailSecondary);
+      secondaryCW.castShadow = true;
+      armGroup.add(secondaryCW);
+
+      // 4. INBOARD ARM (Insulated Cryogenic Product Pipe + Parallel Structural Support Boom & Pantograph Link)
+      //    a) Cryogenic insulated product pipe (White/Silver cladding)
+      const inboardProductPipe = createMemberBetween(
+        new THREE.Vector3(standX, trunnionY, z + 0.55),
+        new THREE.Vector3(apexPos.x, apexPos.y, z + 0.55),
+        0.42,
+        mlaCryoWhiteMat,
+        false
+      );
+      armGroup.add(inboardProductPipe);
+
+      //    b) Structural box boom carrying mechanical loads (FMC Yellow)
+      const inboardStructBoom = createMemberBetween(
+        new THREE.Vector3(standX, trunnionY + 0.4, z - 0.25),
+        new THREE.Vector3(apexPos.x, apexPos.y + 0.4, z - 0.25),
+        0.26,
+        mlaStructYellowMat,
+        true
+      );
+      armGroup.add(inboardStructBoom);
+
+      //    c) Pantograph rigid tension link / cable rod from Secondary Sheave to Apex Sheave
+      const pantoLinkInboard = createMemberBetween(
+        new THREE.Vector3(standX, trunnionY + 1.15, z - 0.95),
+        new THREE.Vector3(apexPos.x, apexPos.y + 1.05, z - 0.95),
+        0.10,
+        mlaSwivelSteelMat,
+        false
+      );
+      armGroup.add(pantoLinkInboard);
+
+      //    d) Hydraulic Luffing Cylinder between Standpost Head and Inboard Boom
+      const luffCyl = createMemberBetween(
+        new THREE.Vector3(standX - 0.8, trunnionY - 2.2, z - 0.25),
+        new THREE.Vector3(standX - 3.6, trunnionY + 3.4, z - 0.25),
+        0.16,
+        steelMat,
+        false
+      );
+      armGroup.add(luffCyl);
+
+      // 5. APEX SWIVEL JOINT & PANTOGRAPH PULLEY SHEAVE (at top knuckle apexPos)
+      const apexSwivel = new THREE.Mesh(new THREE.CylinderGeometry(0.85, 0.85, 2.1, 18), mlaSwivelSteelMat);
+      apexSwivel.rotation.x = Math.PI / 2;
+      apexSwivel.position.copy(apexPos);
+      armGroup.add(apexSwivel);
+
+      const apexSheave = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 0.35, 20), mlaStructYellowMat);
+      apexSheave.rotation.x = Math.PI / 2;
+      apexSheave.position.set(apexPos.x, apexPos.y, z - 0.95);
+      armGroup.add(apexSheave);
+
+      // 6. OUTBOARD ARM (Reaching from Apex Knuckle across to Ship Manifold Drop Leg)
+      //    a) Main insulated cryogenic product pipe
+      const outboardProductPipe = createMemberBetween(
+        new THREE.Vector3(apexPos.x, apexPos.y, z + 0.35),
+        new THREE.Vector3(dropTopPos.x, dropTopPos.y, z + 0.35),
+        0.38,
+        mlaCryoWhiteMat,
+        false
+      );
+      armGroup.add(outboardProductPipe);
+
+      //    b) Outboard structural support boom & pantograph stay rod (FMC Yellow)
+      const outboardStructBoom = createMemberBetween(
+        new THREE.Vector3(apexPos.x, apexPos.y + 0.55, z - 0.35),
+        new THREE.Vector3(dropTopPos.x, dropTopPos.y + 0.35, z - 0.35),
+        0.20,
+        mlaStructYellowMat,
+        true
+      );
+      armGroup.add(outboardStructBoom);
+
+      //    c) Service color band on outboard arm
+      const midOutboard = new THREE.Vector3().lerpVectors(apexPos, dropTopPos, 0.55);
+      const outBand = new THREE.Mesh(new THREE.SphereGeometry(0.46, 12, 12), serviceMat);
+      outBand.position.set(midOutboard.x, midOutboard.y, z + 0.35);
+      armGroup.add(outBand);
+
+      // 7. TRIPLE SWIVEL ASSEMBLY, PERC (Emergency Release Coupler) & QCDC AT SHIP MANIFOLD (x = -148.0 -> -149.3)
+      //    Upper elbow swivel at dropTopPos
+      const dropElbow = new THREE.Mesh(new THREE.SphereGeometry(0.62, 14, 14), mlaSwivelSteelMat);
+      dropElbow.position.set(dropTopPos.x, dropTopPos.y, z + 0.15);
+      armGroup.add(dropElbow);
+
+      //    Vertical drop spool through PERC down to QCDC level
+      const dropSpool = createMemberBetween(
+        new THREE.Vector3(dropTopPos.x, dropTopPos.y, z + 0.15),
+        new THREE.Vector3(qcdcPos.x, qcdcPos.y, z + 0.15),
+        0.36,
+        mlaSwivelSteelMat,
+        false
+      );
+      armGroup.add(dropSpool);
+
+      //    PERC (Powered Emergency Release Coupler) — Red breakaway collar + dual hydraulic release actuators
+      const percCollar = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.68, 1.15, 18), redValveMat);
+      percCollar.position.set(percPos.x, percPos.y, z + 0.15);
+      percCollar.castShadow = true;
+      armGroup.add(percCollar);
+      [-0.65, 0.65].forEach(az => {{
+        const act = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 1.5, 10), mlaStructYellowMat);
+        act.position.set(percPos.x, percPos.y, z + 0.15 + az);
+        armGroup.add(act);
+      }});
+
+      //    Horizontal QCDC (Quick Connect/Disconnect Hydraulic Claw Coupler) mating with Ship Manifold Flange
+      const qcdcSpool = createMemberBetween(
+        new THREE.Vector3(qcdcPos.x, qcdcPos.y, z + 0.15),
+        new THREE.Vector3(shipFlangePos.x, shipFlangePos.y, z + 0.15),
+        0.42,
+        mlaSwivelSteelMat,
+        false
+      );
+      armGroup.add(qcdcSpool);
+
+      const qcdcClaw = new THREE.Mesh(new THREE.CylinderGeometry(0.72, 0.72, 0.55, 16), mlaStructYellowMat);
+      qcdcClaw.rotation.z = Math.PI / 2;
+      qcdcClaw.position.set(-148.85, qcdcPos.y, z + 0.15);
+      armGroup.add(qcdcClaw);
+
+      //    Adjustable telescoping Jack Stand support leg under QCDC on ship manifold drip tray
+      const jackLeg = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 2.2, 10), mlaStructYellowMat);
+      jackLeg.position.set(-148.9, qcdcPos.y - 1.1, z + 0.15);
+      armGroup.add(jackLeg);
 
       terminalGroup.add(armGroup);
     }}
 
-    // ESDV-101 Emergency Shutdown Station on LUP
-    const esdvStation = new THREE.Group();
-    const esdvValve = new THREE.Mesh(new THREE.BoxGeometry(2.5, 3.5, 2.5), redValveMat);
-    esdvValve.position.set(-115, 15, 0);
-    const handwheel = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.2, 8, 16), yellowMat);
-    handwheel.rotation.x = Math.PI / 2;
-    handwheel.position.set(-115, 17.5, 0);
-    esdvStation.add(esdvValve);
-    esdvStation.add(handwheel);
-    terminalGroup.add(esdvStation);
+    mlaSpecs.forEach(spec => createFMCLoadingArm(spec));
+
+    // Ship Midship Cargo Manifold Platform, Stainless Cryogenic Drip Tray & Ship Manifold ESDV Valves (x = -149.3..-155)
+    (function buildShipManifoldAndLUPControlTower() {{
+      const manifoldGrp = new THREE.Group();
+
+      // 1. Stainless Steel Cryogenic Drip Tray & Deluge Water Curtain Frame on Ship's Jetty Side (x = -150.2)
+      const dripTray = new THREE.Mesh(
+        new THREE.BoxGeometry(4.2, 0.45, 34.0),
+        mlaSwivelSteelMat
+      );
+      dripTray.position.set(-150.6, 15.0, 0.0);
+      dripTray.receiveShadow = true;
+      manifoldGrp.add(dripTray);
+
+      // Elevated Manifold Access Platform Grating & Yellow Safety Handrails on Ship Midship
+      const shipPlat = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.35, 36.0), steelMat);
+      shipPlat.position.set(-152.2, 14.7, 0.0);
+      manifoldGrp.add(shipPlat);
+
+      // Individual Ship Manifold Presentation Spools, ESDV Gate Valves & Cross-Deck Headers into Cargo Tanks
+      mlaSpecs.forEach((spec) => {{
+        const z = spec.z + 0.15;
+        const serviceMat = spec.isVapor ? mlaVaporBandMat : mlaLiquidBandMat;
+
+        // Presentation flange disk at x = -149.2
+        const flange = new THREE.Mesh(new THREE.CylinderGeometry(0.68, 0.68, 0.28, 18), serviceMat);
+        flange.rotation.z = Math.PI / 2;
+        flange.position.set(-149.2, 16.3, z);
+        manifoldGrp.add(flange);
+
+        // Horizontal ship manifold pipe running inboard (-x) from flange to ship's cargo dome header
+        const shipPipe = new THREE.Mesh(new THREE.CylinderGeometry(0.38, 0.38, 12.5, 14), mlaCryoWhiteMat);
+        shipPipe.rotation.z = Math.PI / 2;
+        shipPipe.position.set(-155.4, 16.3, z);
+        shipPipe.castShadow = true;
+        manifoldGrp.add(shipPipe);
+
+        // Ship Manifold ESDV Pneumatic Actuator Valve (Red actuator cylinder)
+        const shipEsdv = new THREE.Mesh(new THREE.BoxGeometry(1.1, 1.8, 1.1), redValveMat);
+        shipEsdv.position.set(-151.8, 17.2, z);
+        manifoldGrp.add(shipEsdv);
+
+        // Saddle supports on ship manifold deck
+        [-150.8, -154.5].forEach(sx => {{
+          const saddle = new THREE.Mesh(new THREE.BoxGeometry(0.5, 1.2, 0.9), mlaStructYellowMat);
+          saddle.position.set(sx, 15.5, z);
+          manifoldGrp.add(saddle);
+        }});
+      }});
+
+      // 2. LUP Elevated Operator Control Cabin / Loading Master Tower (overlooking the 4 FMC/JLA arms)
+      const towerX = -114.0, towerZ = -16.5;
+      const towerCols = new THREE.Mesh(new THREE.BoxGeometry(4.8, 9.5, 4.8), steelMat);
+      towerCols.position.set(towerX, 12.0 + 4.75, towerZ);
+      manifoldGrp.add(towerCols);
+
+      const cabinBody = new THREE.Mesh(
+        new THREE.BoxGeometry(6.8, 3.8, 7.6),
+        new THREE.MeshStandardMaterial({{ color: 0xe2e8f0, roughness: 0.45 }})
+      );
+      cabinBody.position.set(towerX, 23.2, towerZ);
+      cabinBody.castShadow = true;
+      manifoldGrp.add(cabinBody);
+
+      const cabinGlass = new THREE.Mesh(new THREE.BoxGeometry(0.35, 2.2, 6.8), windowMat);
+      cabinGlass.position.set(towerX - 3.3, 23.4, towerZ);
+      manifoldGrp.add(cabinGlass);
+
+      // ESDV-101 Emergency Shutdown Valve Skid & Hydraulic Power Unit (HPU) for FMC Loading Arms on LUP
+      const hpuCabin = new THREE.Mesh(new THREE.BoxGeometry(4.2, 3.2, 5.5), mlaStructYellowMat);
+      hpuCabin.position.set(-115.0, 13.6, 14.0);
+      hpuCabin.castShadow = true;
+      manifoldGrp.add(hpuCabin);
+
+      const esdvValve = new THREE.Mesh(new THREE.BoxGeometry(2.5, 3.5, 2.5), redValveMat);
+      esdvValve.position.set(-115.0, 15.0, 0.0);
+      const handwheel = new THREE.Mesh(new THREE.TorusGeometry(1.2, 0.2, 8, 16), yellowMat);
+      handwheel.rotation.x = Math.PI / 2;
+      handwheel.position.set(-115.0, 17.5, 0.0);
+      manifoldGrp.add(esdvValve);
+      manifoldGrp.add(handwheel);
+
+      terminalGroup.add(manifoldGrp);
+    }})();
 
     // 2. LNG Carrier Vessel — berthed alongside Breasting Dolphins (ship center x = -172, jetty side x = -149)
     const shipGroup = new THREE.Group();
