@@ -20,6 +20,12 @@ class Solver3DConfig:
     n_azimuthal: int = 12    # Number of azimuthal sectors (theta)
     n_axial: int = 50        # Number of axial marching planes (z)
 
+    def __getattr__(self, name: str):
+        """Forward PipelineSimulationConfig attributes for unified 1D/3D interface compatibility."""
+        if name == "pipeline_config":
+            raise AttributeError(name)
+        return getattr(self.pipeline_config, name)
+
 
 @dataclass
 class Simulation3DResults:
@@ -55,6 +61,64 @@ class Simulation3DResults:
     def flashing_margin_pa(self) -> List[float]:
         """Backward-compatible alias returning wall flashing margin (most conservative)."""
         return self.wall_flashing_margin_pa
+
+    @property
+    def temperature_k(self) -> List[float]:
+        """Unified 1D/3D alias returning bulk axial temperature profile [K]."""
+        return self.bulk_temperature_k
+
+    @property
+    def vapor_pressure_pa(self) -> List[float]:
+        """Unified 1D/3D alias returning wall saturation vapor pressure profile [Pa]."""
+        return self.wall_vapor_pressure_pa
+
+    @property
+    def outlet_temperature_k(self) -> float:
+        """Unified 1D/3D outlet bulk temperature [K]."""
+        return self.bulk_temperature_k[-1] if self.bulk_temperature_k else 0.0
+
+    @property
+    def outlet_pressure_pa(self) -> float:
+        """Unified 1D/3D outlet pressure [Pa]."""
+        return self.pressure_pa[-1] if self.pressure_pa else 0.0
+
+    @property
+    def outlet_vapor_pressure_pa(self) -> float:
+        """Unified 1D/3D outlet wall vapor pressure [Pa]."""
+        return self.wall_vapor_pressure_pa[-1] if self.wall_vapor_pressure_pa else 0.0
+
+    @property
+    def inlet_vapor_pressure_pa(self) -> float:
+        """Unified 1D/3D inlet wall vapor pressure [Pa]."""
+        return self.wall_vapor_pressure_pa[0] if self.wall_vapor_pressure_pa else 0.0
+
+    @property
+    def has_flashed(self) -> bool:
+        """Unified 1D/3D flashing flag (True if wall or bulk flashed)."""
+        return bool(self.has_wall_flashed or self.has_bulk_flashed)
+
+    @property
+    def flashing_point_m(self) -> Optional[float]:
+        """Unified 1D/3D first flashing location [m]."""
+        return self.wall_flashing_point_m if self.wall_flashing_point_m is not None else self.bulk_flashing_point_m
+
+    @property
+    def velocity_m_s(self) -> List[float]:
+        """Unified 1D/3D axial velocity profile [m/s] computed from density and cross-section."""
+        cfg = self.config.pipeline_config
+        area = math.pi * ((cfg.inner_diameter_m / 2.0) ** 2)
+        if area <= 0.0 or not self.density_kg_m3:
+            return [0.0] * len(self.distance_m)
+        return [cfg.mass_flow_rate_kg_s / (max(rho, 1e-6) * area) for rho in self.density_kg_m3]
+
+
+def is_3d_results(results: object) -> bool:
+    """Reload-safe check for Simulation3DResults across Streamlit module hot-reloads."""
+    return (
+        isinstance(results, Simulation3DResults)
+        or hasattr(results, "bulk_temperature_k")
+        or getattr(getattr(results, "__class__", None), "__name__", "") == "Simulation3DResults"
+    )
 
 
 def solve_tdma(a: np.ndarray, b: np.ndarray, c: np.ndarray, d: np.ndarray) -> np.ndarray:

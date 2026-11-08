@@ -8,7 +8,7 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from core.solver import PipelineSimulationResults
-from core.solver_3d import Simulation3DResults
+from core.solver_3d import Simulation3DResults, is_3d_results
 from core.terminal_ops import evaluate_terminal_operations
 from core.mechanics import (
     PipelineSpecification,
@@ -38,7 +38,7 @@ def generate_pdf_report(
         bottomMargin=36
     )
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         cfg = results.config.pipeline_config
         outlet_t_k = results.bulk_temperature_k[-1]
         outlet_p_pa = results.pressure_pa[-1]

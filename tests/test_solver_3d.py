@@ -93,3 +93,46 @@ def test_solver_3d_detects_wall_flashing_before_bulk():
     assert results.has_wall_flashed is True
     if results.has_bulk_flashed:
         assert results.wall_flashing_point_m <= results.bulk_flashing_point_m
+
+
+def test_simulation_3d_results_unified_interface_and_hot_reload_resilience():
+    import importlib
+    import core.solver_3d as s3d_mod
+    from components.pipeline_schematic_2d import generate_schematic_2d_html
+    from components.terminal_3d_viewer import generate_terminal_3d_html
+    from components.pipe_3d_viewer import generate_3d_pipe_html
+    from components.charts_2d import (
+        create_pressure_comparison_chart,
+        create_temperature_profile_chart,
+        create_flashing_margin_chart,
+    )
+
+    fm = FluidManager(fluid_type="pure_methane")
+    layers = [InsulationLayer(name="PIR", thickness_m=0.05, thermal_conductivity=0.024)]
+    thermal_model = PipeThermalModel(inner_diameter_m=0.20, wall_thickness_m=0.008, insulation_layers=layers)
+    pipe_cfg = PipelineSimulationConfig(length_m=300.0, inner_diameter_m=0.20, num_cells=20)
+    cfg_3d = Solver3DConfig(pipeline_config=pipe_cfg, n_radial=8, n_azimuthal=8, n_axial=20)
+    res_3d = PipelineSolver3D(fluid_manager=fm, thermal_model=thermal_model, config=cfg_3d).solve()
+
+    # 1. Unified 1D/3D interface properties on Simulation3DResults & Solver3DConfig
+    assert res_3d.outlet_temperature_k == pytest.approx(res_3d.bulk_temperature_k[-1])
+    assert res_3d.outlet_pressure_pa == pytest.approx(res_3d.pressure_pa[-1])
+    assert res_3d.outlet_vapor_pressure_pa == pytest.approx(res_3d.wall_vapor_pressure_pa[-1])
+    assert res_3d.inlet_vapor_pressure_pa == pytest.approx(res_3d.wall_vapor_pressure_pa[0])
+    assert res_3d.has_flashed == (res_3d.has_wall_flashed or res_3d.has_bulk_flashed)
+    assert res_3d.temperature_k == res_3d.bulk_temperature_k
+    assert res_3d.vapor_pressure_pa == res_3d.wall_vapor_pressure_pa
+    assert len(res_3d.velocity_m_s) == len(res_3d.distance_m)
+    assert res_3d.config.inlet_temperature_k == pytest.approx(pipe_cfg.inlet_temperature_k)
+    assert res_3d.config.length_m == pytest.approx(pipe_cfg.length_m)
+
+    # 2. Simulate Streamlit module hot-reload where cached object comes from pre-reload class
+    importlib.reload(s3d_mod)
+    assert s3d_mod.is_3d_results(res_3d) is True
+    assert len(generate_schematic_2d_html(res_3d)) > 1000
+    assert len(generate_terminal_3d_html(res_3d)) > 1000
+    assert len(generate_3d_pipe_html(res_3d)) > 1000
+    assert create_pressure_comparison_chart(res_3d) is not None
+    assert create_temperature_profile_chart(res_3d) is not None
+    assert create_flashing_margin_chart(res_3d) is not None
+

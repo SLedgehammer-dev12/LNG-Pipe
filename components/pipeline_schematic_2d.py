@@ -2,14 +2,14 @@
 
 import json
 from core.solver import PipelineSimulationResults
-from core.solver_3d import Simulation3DResults
+from core.solver_3d import Simulation3DResults, is_3d_results
 from core.units import from_si
 
 
 def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | None = None, anchor_dist_m: float = 180.0, temp_unit: str = "°C", press_unit: str = "bar") -> str:
     """Generates an interactive SVG/HTML P&ID schematic of the Jetty-to-Tank circuit."""
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         cfg = results.config.pipeline_config
         t_out_k = results.bulk_temperature_k[-1]
         p_out_pa = results.pressure_pa[-1]

@@ -5,7 +5,7 @@ import math
 import numpy as np
 import plotly.graph_objects as go
 from core.solver import PipelineSimulationResults
-from core.solver_3d import Simulation3DResults
+from core.solver_3d import Simulation3DResults, is_3d_results
 from core.units import from_si, delta_from_si, unit_display_label, delta_unit_display_label
 
 
@@ -47,7 +47,7 @@ def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, S
         hovertemplate=f"Toplam Basınç: %{{y:.3f}} {p_lbl}<extra></extra>"
     ))
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         p_sat_wall = [from_si("pressure", p, press_unit) for p in results.wall_vapor_pressure_pa]
         p_sat_bulk = [from_si("pressure", p, press_unit) for p in results.bulk_vapor_pressure_pa]
 
@@ -117,7 +117,7 @@ def create_temperature_profile_chart(results: Union[PipelineSimulationResults, S
 
     fig = go.Figure()
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         t_bulk = [from_si("temperature", t, t_unit_label) for t in results.bulk_temperature_k]
         t_center = [from_si("temperature", t, t_unit_label) for t in results.center_temperature_k]
         t_wall = [from_si("temperature", t, t_unit_label) for t in results.wall_temperature_k]
@@ -178,7 +178,7 @@ def create_flashing_margin_chart(results: Union[PipelineSimulationResults, Simul
     dp_lbl = delta_unit_display_label("pressure", press_unit)
     fig = go.Figure()
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         wall_margin = [delta_from_si("pressure", m, press_unit) for m in results.wall_flashing_margin_pa]
         bulk_margin = [delta_from_si("pressure", m, press_unit) for m in results.bulk_flashing_margin_pa]
 

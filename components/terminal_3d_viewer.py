@@ -2,7 +2,7 @@
 
 import json
 from core.solver import PipelineSimulationResults
-from core.solver_3d import Simulation3DResults
+from core.solver_3d import Simulation3DResults, is_3d_results
 
 
 def generate_terminal_3d_html(
@@ -35,7 +35,7 @@ def generate_terminal_3d_html(
     - Camera presets and interactive inspector
     """
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         cfg = results.config.pipeline_config
         t_out = results.bulk_temperature_k[-1] - 273.15
         p_out = results.pressure_pa[-1] / 1e5
@@ -77,7 +77,7 @@ def generate_terminal_3d_html(
         "margin_bar": [round(station_margin[i] / 1e5, 3) for i in idx],
     }
     if return_results is not None:
-        if isinstance(return_results, Simulation3DResults):
+        if is_3d_results(return_results):
             rt, rp, rps, rmg = (
                 return_results.bulk_temperature_k,
                 return_results.pressure_pa,

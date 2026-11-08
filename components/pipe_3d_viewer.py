@@ -2,13 +2,13 @@
 
 import json
 from core.solver import PipelineSimulationResults
-from core.solver_3d import Simulation3DResults
+from core.solver_3d import Simulation3DResults, is_3d_results
 
 
 def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C", press_unit: str = "bar") -> str:
     """Generates a self-contained responsive Three.js 3D WebGL pipeline cutaway visualizer."""
 
-    if isinstance(results, Simulation3DResults):
+    if is_3d_results(results):
         cfg = results.config.pipeline_config
         outlet_t_k = results.bulk_temperature_k[-1]
         outlet_psat_pa = results.wall_vapor_pressure_pa[-1]
