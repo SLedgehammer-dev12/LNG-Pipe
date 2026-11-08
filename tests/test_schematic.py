@@ -127,3 +127,41 @@ def test_terminal_3d_irregular_coast_earth_terrain_and_jetty_side_mooring_qrh(sa
     assert "createCatwalkBridge" in html
     assert "mooringLinePairs" in html
 
+
+def test_terminal_3d_four_tanks_spherical_dome_roof_piping_lng_pit_and_control_bldg(sample_simulation_results):
+    html = generate_terminal_3d_html(sample_simulation_results, length_m=500.0)
+    # 1. 4 LNG Storage Tanks (1x4 coastal-parallel row: T-101..T-104) with T-101 cutaway
+    for code in ("T-101", "T-102", "T-103", "T-104"):
+        assert f'code: "{code}"' in html
+    assert 'code: "T-101", z: -195.0, cutaway: true' in html
+    assert "createTankBandTexture" in html
+
+    # 2. Corrected spherical dome roof (SphereGeometry cap, no inverted cone CylinderGeometry(62, 50, 10, 64))
+    assert "domeSphereR" in html
+    assert "domeThetaMax" in html
+    assert "CylinderGeometry(62, 50, 10, 64)" not in html
+
+    # 3. Roof-top piping & valve platform + Inter-tank supply, return & BOG headers
+    assert "roofFillHeader" in html
+    assert "roofRetHeader" in html
+    assert "buildInterTankPiping" in html
+    assert "supplyHeaderCurve" in html
+    assert "returnHeaderCurve" in html
+    assert "bogHeaderCurve" in html
+    assert "supRiser" in html
+    assert "retRiser" in html
+
+    # 4. Secondary impounding basins (dikes), concrete spill trenches, common deep LNG Pit & foam generators
+    assert "buildImpoundingAndLNGPit" in html
+    assert "pitCryoPool" in html
+    assert "mainTrenchFloor" in html
+    assert "foamGenMat" in html
+
+    # 5. Automation & Control Building behind tanks + Full Perimeter Access Road network
+    assert "buildAutomationAndControlBuilding" in html
+    assert "ctrlGlassMat" in html
+    assert "addRoadSegment" in html
+    assert "westRoadX" in html
+    assert "eastRoadX" in html
+
+

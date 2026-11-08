@@ -343,7 +343,8 @@ def generate_terminal_3d_html(
       <button class="cam-btn active" onclick="setCameraView('overview', this)">🌐 Genel Bakış</button>
       <button class="cam-btn" onclick="setCameraView('lup', this)">🚢 LUP & Gemi</button>
       <button class="cam-btn" onclick="setCameraView('omega', this)">➰ Omega Dolfenleri</button>
-      <button class="cam-btn" onclick="setCameraView('tank', this)">🏢 Kara Tankı & Pompa</button>
+      <button class="cam-btn" onclick="setCameraView('tank', this)">🏢 4x Tank Sahası & Kontrol</button>
+      <button class="cam-btn" onclick="setCameraView('roof', this)">🏗️ Çatı Vana & LNG Pit</button>
       <button class="cam-btn" onclick="resetControls()">⟲ Sıfırla</button>
     </div>
   </div>
@@ -554,8 +555,8 @@ def generate_terminal_3d_html(
             const s = (u - 0.06) / 0.10;
             y = 0.7 + (3 * s * s - 2 * s * s * s) * 4.3; // natural coastal bank up to +5.0m
           }} else {{
-            // Keep terminal pad around LNG tank & road level (|z| < 135), natural rolling hills outside
-            const padFlatten = Math.min(1.0, Math.max(0.0, (Math.abs(z) - 115.0) / 90.0));
+            // Keep terminal plateau flat across the 1x4 tank farm, LNG pit & control building (|z| < 355)
+            const padFlatten = Math.min(1.0, Math.max(0.0, (Math.abs(z) - 355.0) / 110.0));
             const hill = (
               7.5 * Math.sin(x * 0.012 + z * 0.009) +
               4.5 * Math.cos(x * 0.025 - z * 0.016) +
@@ -639,14 +640,14 @@ def generate_terminal_3d_html(
       abutment.receiveShadow = true;
       scene.add(abutment);
 
-      // Compact graded gravel pad under the LNG storage tank & pump station
-      const padGeo = new THREE.CylinderGeometry(84, 88, 1.0, 48);
+      // Graded engineered gravel/earth foundation pad under the 1x4 LNG tank farm, LNG pit & control building
+      const padGeo = new THREE.BoxGeometry(285, 0.5, 700);
       const padMat = new THREE.MeshStandardMaterial({{
-        color: isNight ? 0x3a352f : 0x9a8b78,
-        roughness: 0.9
+        color: isNight ? 0x352e27 : 0x917c65,
+        roughness: 0.92
       }});
       const tankPad = new THREE.Mesh(padGeo, padMat);
-      tankPad.position.set(TANK_X, 4.7, 0);
+      tankPad.position.set(TANK_X + 24.0, 4.82, 20.0);
       tankPad.receiveShadow = true;
       scene.add(tankPad);
     }})();
@@ -728,25 +729,68 @@ def generate_terminal_3d_html(
       }}
     }})();
 
-    // Onshore vehicle access road from the land to the seawall
+    // Onshore terminal asphalt road network: jetty approach, 4-tank perimeter ring road, inter-tank roads & control building access
     (function buildAccessRoad() {{
-      const roadMat = new THREE.MeshStandardMaterial({{ color: 0x262b31, roughness: 0.95 }});
-      const roadY = 5.2;
-      const roadZ = 80.0;
-      const roadWidth = 12.0;
-      const roadStart = SEAWALL_X;
-      const roadEnd = LAND_X + 180.0;
-      const roadLen = roadEnd - roadStart;
-      const road = new THREE.Mesh(new THREE.BoxGeometry(roadLen, 0.2, roadWidth), roadMat);
-      road.position.set((roadStart + roadEnd) / 2, roadY, roadZ);
-      road.receiveShadow = true;
-      terminalGroup.add(road);
-      const dashMat = new THREE.MeshBasicMaterial({{ color: 0xd0d7de }});
-      for (let x = roadStart + 6; x < roadEnd; x += 12) {{
-        const dash = new THREE.Mesh(new THREE.BoxGeometry(5, 0.05, 0.25), dashMat);
-        dash.position.set(x, roadY + 0.12, roadZ);
-        terminalGroup.add(dash);
+      const roadMat = new THREE.MeshStandardMaterial({{ color: 0x262b31, roughness: 0.92 }});
+      const curbMat = new THREE.MeshStandardMaterial({{ color: 0x94a3b8, roughness: 0.8 }});
+      const dashMat = new THREE.MeshBasicMaterial({{ color: 0xfacc15 }});
+      const roadY = 5.18;
+
+      function addRoadSegment(x1, z1, x2, z2, width = 10.5) {{
+        const dx = x2 - x1, dz = z2 - z1;
+        const len = Math.hypot(dx, dz);
+        const angle = Math.atan2(dx, dz);
+        const cx = (x1 + x2) / 2.0, cz = (z1 + z2) / 2.0;
+
+        // Concrete shoulder / curb base
+        const curb = new THREE.Mesh(new THREE.BoxGeometry(width + 1.4, 0.14, len + 1.4), curbMat);
+        curb.position.set(cx, roadY - 0.04, cz);
+        curb.receiveShadow = true;
+        terminalGroup.add(curb);
+
+        // Asphalt surface
+        const road = new THREE.Mesh(new THREE.BoxGeometry(width, 0.18, len), roadMat);
+        road.position.set(cx, roadY, cz);
+        road.rotation.y = angle;
+        road.receiveShadow = true;
+        terminalGroup.add(road);
+
+        // Center dashed yellow/white lane markings
+        const nDashes = Math.floor((len - 8.0) / 11.0);
+        for (let i = 0; i < nDashes; i++) {{
+          const f = (i + 0.8) / Math.max(1, nDashes);
+          const dash = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.04, 4.5), dashMat);
+          dash.position.set(x1 + dx * f, roadY + 0.11, z1 + dz * f);
+          dash.rotation.y = angle;
+          terminalGroup.add(dash);
+        }}
       }}
+
+      const westRoadX = TANK_X - 72.0;
+      const eastRoadX = TANK_X + 72.0;
+      const northRoadZ = -272.0;
+      const southRoadZ = 342.0;
+
+      // 1. Coastal Jetty Approach Road from shore abutment to West Arterial Road
+      addRoadSegment(SEAWALL_X + 2.0, 22.0, westRoadX, 22.0, 11.5);
+      // 2. West Arterial Road (runs North-South in front of all 4 tanks and the LNG Pit)
+      addRoadSegment(westRoadX, northRoadZ, westRoadX, southRoadZ, 11.5);
+      // 3. East Arterial Fire & Control Road (runs behind all 4 tanks in front of Control Building)
+      addRoadSegment(eastRoadX, northRoadZ, eastRoadX, southRoadZ, 11.5);
+      // 4. North & South Perimeter Ring Roads closing the loop around tanks & LNG Pit
+      addRoadSegment(westRoadX, northRoadZ, eastRoadX, northRoadZ, 10.5);
+      addRoadSegment(westRoadX, southRoadZ, eastRoadX, southRoadZ, 10.5);
+      // 5. Inter-Tank Cross Access Roads between T-101/T-102, T-102/T-103, T-103/T-104, and T-104/LNG Pit
+      [-130.0, 0.0, 130.0, 260.0].forEach(cz => {{
+        addRoadSegment(westRoadX, cz, eastRoadX, cz, 8.5);
+      }});
+      // 6. Control Building Entrance Spur & Parking Apron
+      addRoadSegment(eastRoadX, -32.0, TANK_X + 94.0, -32.0, 9.0);
+      addRoadSegment(eastRoadX,  32.0, TANK_X + 94.0,  32.0, 9.0);
+      const apron = new THREE.Mesh(new THREE.BoxGeometry(24.0, 0.18, 96.0), roadMat);
+      apron.position.set(TANK_X + 90.0, roadY, 0.0);
+      apron.receiveShadow = true;
+      terminalGroup.add(apron);
     }})();
 
     function createDolphin(x, z, width, depth, height, pileCount = 4, name = "") {{
@@ -1141,79 +1185,519 @@ def generate_terminal_3d_html(
       createDolphin(cx, omegaPlatformZ, OMEGA_W + 26.0, omegaPlatformDepth, 11, 6, `Omega Dolfeni ${{k + 1}}`);
     }});
 
-    // 5. Onshore LNG Storage Tank (Full Containment)
-    const tankGroup = new THREE.Group();
-    // Concrete outer containment wall
-    const outerWall = new THREE.Mesh(
-      new THREE.CylinderGeometry(60, 60, 56, 64),
-      new THREE.MeshStandardMaterial({{ color: 0x8c959f, roughness: 0.85 }})
-    );
-    outerWall.position.set(TANK_X, 28, 0);
-    outerWall.castShadow = true;
-    outerWall.receiveShadow = true;
-    tankGroup.add(outerWall);
+    // 5. Onshore 4x Full-Containment LNG Storage Tank Farm (1x4 Coastal-Parallel Row: T-101..T-104),
+    //    Spherical Dome Roofs, Roof-Top Valve & Pump Platforms, Impounding Basins, LNG Spill Pit & Control Building
+    const tankFarmGroup = new THREE.Group();
+    const R_TANK = 40.0;        // Outer prestressed concrete wall radius (D = 80m)
+    const H_WALL = 46.0;        // Outer cylinder height from ground y=5.0 to top ring y=51.0
+    const WALL_BASE_Y = 5.0;
+    const WALL_TOP_Y = WALL_BASE_Y + H_WALL; // 51.0
+    const H_DOME = 10.5;        // True spherical dome rise above compression ring
+    const DOME_APEX_Y = WALL_TOP_Y + 1.2 + H_DOME; // 62.7
+    const TANK_HEADER_X = TANK_X - 56.0;
 
-    // Domed (low-profile prestressed-concrete) roof on the outer wall
-    const roof = new THREE.Mesh(
-      new THREE.CylinderGeometry(62, 50, 10, 64),
-      new THREE.MeshStandardMaterial({{ color: 0x9ca3af, roughness: 0.7 }})
-    );
-    roof.position.set(TANK_X, 63, 0);
-    roof.castShadow = true;
-    roof.receiveShadow = true;
-    tankGroup.add(roof);
+    // 1x4 North-to-South parallel tank row; T-101 has semi-transparent cutaway showing 9% Ni inner tank & liquid LNG
+    const TANK_SPECS = [
+      {{ code: "T-101", z: -195.0, cutaway: true,  fillRatio: 0.85 }},
+      {{ code: "T-102", z:  -65.0, cutaway: false, fillRatio: 0.82 }},
+      {{ code: "T-103", z:   65.0, cutaway: false, fillRatio: 0.78 }},
+      {{ code: "T-104", z:  195.0, cutaway: false, fillRatio: 0.88 }}
+    ];
 
-    // Bund wall around tank
-    const bundGeo = new THREE.CylinderGeometry(76, 76, 9, 48, 1, true);
-    const bundMat = new THREE.MeshStandardMaterial({{ color: 0x4a5560, roughness: 0.9, side: THREE.DoubleSide }});
-    const bund = new THREE.Mesh(bundGeo, bundMat);
-    bund.position.set(TANK_X, 4.5, 0);
-    bund.castShadow = true;
-    tankGroup.add(bund);
+    // Helper: Canvas texture for tank corporate blue band & nameplate (T-101..T-104 LNG)
+    function createTankBandTexture(tankCode) {{
+      const canvas = document.createElement('canvas');
+      canvas.width = 1024;
+      canvas.height = 128;
+      const ctx = canvas.getContext('2d');
+      ctx.fillStyle = '#005a9e';
+      ctx.fillRect(0, 0, 1024, 128);
+      ctx.fillStyle = '#00a8e8';
+      ctx.fillRect(0, 0, 1024, 16);
+      ctx.fillRect(0, 112, 1024, 16);
+      ctx.fillStyle = '#ffffff';
+      ctx.font = 'bold 54px -apple-system, BlinkMacSystemFont, "Segoe UI", Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // Repeat label around circumference so visible from seaward, landward, north, and south
+      [128, 384, 640, 896].forEach(cx => {{
+        ctx.fillText(tankCode + '  •  LNG', cx, 64);
+      }});
+      const tex = new THREE.CanvasTexture(canvas);
+      tex.wrapS = THREE.RepeatWrapping;
+      tex.wrapT = THREE.ClampToEdgeWrapping;
+      tex.needsUpdate = true;
+      return tex;
+    }}
 
-    // Inner 9% Ni steel tank (slightly smaller, inside outer wall)
-    const innerTank = new THREE.Mesh(
-      new THREE.CylinderGeometry(53, 53, 50, 64),
-      new THREE.MeshStandardMaterial({{ color: 0x374151, roughness: 0.4, metalness: 0.85 }})
-    );
-    innerTank.position.set(TANK_X, 25, 0);
-    innerTank.castShadow = true;
-    innerTank.receiveShadow = true;
-    tankGroup.add(innerTank);
+    const tankConcreteSolidMat = new THREE.MeshStandardMaterial({{
+      color: isNight ? 0xcbd5e1 : 0xf1f5f9,
+      roughness: 0.72,
+      metalness: 0.08
+    }});
+    const tankConcreteCutawayMat = new THREE.MeshStandardMaterial({{
+      color: 0xe2e8f0,
+      roughness: 0.55,
+      metalness: 0.1,
+      transparent: true,
+      opacity: 0.34,
+      depthWrite: false
+    }});
+    const tankDomeMat = new THREE.MeshStandardMaterial({{
+      color: isNight ? 0xb8c4d0 : 0xdbe4ee,
+      roughness: 0.42,
+      metalness: 0.28
+    }});
+    const compressionRingMat = new THREE.MeshStandardMaterial({{ color: 0x64748b, roughness: 0.65, metalness: 0.2 }});
+    const innerNiSteelMat = new THREE.MeshStandardMaterial({{ color: 0x334155, roughness: 0.38, metalness: 0.82 }});
+    const lngLiquidMat = new THREE.MeshStandardMaterial({{
+      color: 0x0ea5e9,
+      emissive: 0x0369a1,
+      emissiveIntensity: 0.35,
+      roughness: 0.2,
+      transparent: true,
+      opacity: 0.68
+    }});
+    const lngSurfaceRingMat = new THREE.MeshStandardMaterial({{ color: 0x38bdf8, roughness: 0.15, metalness: 0.9 }});
+    const blueValveMat = new THREE.MeshStandardMaterial({{ color: 0x0284c7, roughness: 0.3, metalness: 0.5 }});
+    const greenValveMat = new THREE.MeshStandardMaterial({{ color: 0x16a34a, roughness: 0.3, metalness: 0.5 }});
+    const bogPipeMat = new THREE.MeshStandardMaterial({{ color: 0x38bdf8, roughness: 0.3, metalness: 0.65 }});
+    const gratingDeckMat = new THREE.MeshStandardMaterial({{ color: 0x334155, roughness: 0.65, metalness: 0.55 }});
 
-    // LNG liquid level (~85 % of inner tank height)
-    const fillH = 50 * 0.85;
-    const liquid = new THREE.Mesh(
-      new THREE.CylinderGeometry(52, 52, fillH, 64),
-      new THREE.MeshStandardMaterial({{ color: 0x1f6feb, roughness: 0.3, transparent: true, opacity: 0.45 }})
-    );
-    liquid.position.set(TANK_X, fillH / 2, 0);
-    tankGroup.add(liquid);
-    // Liquid surface ring
-    const surface = new THREE.Mesh(
-      new THREE.CylinderGeometry(52.1, 52.1, 0.6, 64),
-      new THREE.MeshStandardMaterial({{ color: 0x3fb950, roughness: 0.2, metalness: 0.9 }})
-    );
-    surface.position.set(TANK_X, fillH + 0.3, 0);
-    tankGroup.add(surface);
+    // Exact spherical dome geometry: base radius R_DOME = 40.4m, rise H_DOME = 10.5m
+    const R_DOME = R_TANK + 0.4;
+    const domeSphereR = (R_DOME * R_DOME + H_DOME * H_DOME) / (2.0 * H_DOME);
+    const domeThetaMax = Math.asin(R_DOME / domeSphereR);
+    const domeGeo = new THREE.SphereGeometry(domeSphereR, 64, 24, 0, Math.PI * 2, 0, domeThetaMax);
 
-    // Recirculation Pump P-201 Station
-    const pumpGeo = new THREE.CylinderGeometry(2, 2.5, 4, 16);
-    const pumpMesh = new THREE.Mesh(pumpGeo, new THREE.MeshStandardMaterial({{ color: 0x2ea043, roughness: 0.3 }}));
-    pumpMesh.position.set(PUMP_X, 4, -18);
-    pumpMesh.castShadow = true;
-    tankGroup.add(pumpMesh);
+    function createFullContainmentLNGTank(spec) {{
+      const tGrp = new THREE.Group();
+      const tz = spec.z;
 
-    // Pump motor
-    const motorGeo = new THREE.CylinderGeometry(1.5, 1.5, 3.5, 16);
-    const motorMesh = new THREE.Mesh(motorGeo, steelMat);
-    motorMesh.position.set(PUMP_X, 7.5, -18);
-    motorMesh.castShadow = true;
-    tankGroup.add(motorMesh);
+      // 5.1 Reinforced concrete foundation plinth & thermal corner protection ring
+      const plinth = new THREE.Mesh(
+        new THREE.CylinderGeometry(R_TANK + 1.8, R_TANK + 2.6, 2.2, 64),
+        compressionRingMat
+      );
+      plinth.position.set(TANK_X, WALL_BASE_Y + 1.1, tz);
+      plinth.castShadow = true;
+      plinth.receiveShadow = true;
+      tGrp.add(plinth);
 
-    terminalGroup.add(tankGroup);
+      // 5.2 Outer prestressed concrete containment wall (Cryogenic White / Cream)
+      const outerWall = new THREE.Mesh(
+        new THREE.CylinderGeometry(R_TANK, R_TANK, H_WALL, 64),
+        spec.cutaway ? tankConcreteCutawayMat : tankConcreteSolidMat
+      );
+      outerWall.position.set(TANK_X, WALL_BASE_Y + H_WALL / 2.0, tz);
+      outerWall.castShadow = true;
+      outerWall.receiveShadow = true;
+      tGrp.add(outerWall);
 
-    // 6. PIPELINES: supply route plus a true parallel-offset return route.
+      // Horizontal post-tensioning concrete ribs
+      [14.0, 24.0, 34.0].forEach(ry => {{
+        const rib = new THREE.Mesh(new THREE.TorusGeometry(R_TANK + 0.18, 0.22, 8, 64), compressionRingMat);
+        rib.rotation.x = Math.PI / 2;
+        rib.position.set(TANK_X, ry, tz);
+        tGrp.add(rib);
+      }});
+
+      // Corporate LNG Blue Band & Tank Code Nameplate (T-101..T-104) near top of cylinder
+      const bandTex = createTankBandTexture(spec.code);
+      const bandMat = new THREE.MeshStandardMaterial({{ map: bandTex, roughness: 0.4, metalness: 0.15 }});
+      const bandCyl = new THREE.Mesh(
+        new THREE.CylinderGeometry(R_TANK + 0.15, R_TANK + 0.15, 5.2, 64, 1, true),
+        bandMat
+      );
+      bandCyl.position.set(TANK_X, WALL_TOP_Y - 5.5, tz);
+      tGrp.add(bandCyl);
+
+      // 5.3 Upper concrete compression ring beam + perimeter safety yellow handrail
+      const compRing = new THREE.Mesh(
+        new THREE.CylinderGeometry(R_TANK + 1.1, R_TANK + 0.5, 2.2, 64),
+        compressionRingMat
+      );
+      compRing.position.set(TANK_X, WALL_TOP_Y + 0.8, tz);
+      compRing.castShadow = true;
+      tGrp.add(compRing);
+
+      const perimeterRail = new THREE.Mesh(
+        new THREE.TorusGeometry(R_TANK + 0.7, 0.16, 8, 64),
+        railingMat
+      );
+      perimeterRail.rotation.x = Math.PI / 2;
+      perimeterRail.position.set(TANK_X, WALL_TOP_Y + 2.4, tz);
+      tGrp.add(perimeterRail);
+
+      // 5.4 FIXED True Spherical Dome Roof (SphereGeometry cap instead of inverted cone)
+      const domeMesh = new THREE.Mesh(domeGeo, tankDomeMat);
+      domeMesh.position.set(TANK_X, (WALL_TOP_Y + 1.2) - (domeSphereR - H_DOME), tz);
+      domeMesh.castShadow = true;
+      domeMesh.receiveShadow = true;
+      tGrp.add(domeMesh);
+
+      // Concentric structural dome stiffening rings
+      [14.0, 27.0].forEach(rr => {{
+        const dy = Math.sqrt(Math.max(0, domeSphereR * domeSphereR - rr * rr)) - (domeSphereR - H_DOME);
+        const dRing = new THREE.Mesh(new THREE.TorusGeometry(rr, 0.14, 8, 48), compressionRingMat);
+        dRing.rotation.x = Math.PI / 2;
+        dRing.position.set(TANK_X, WALL_TOP_Y + 1.25 + dy, tz);
+        tGrp.add(dRing);
+      }});
+
+      // 5.5 Cutaway Inner 9% Ni Steel Tank & Cryogenic LNG Liquid Level (shown on T-101)
+      if (spec.cutaway) {{
+        const innerH = 41.0;
+        const innerTank = new THREE.Mesh(
+          new THREE.CylinderGeometry(R_TANK - 4.5, R_TANK - 4.5, innerH, 56, 1, true),
+          innerNiSteelMat
+        );
+        innerTank.position.set(TANK_X, WALL_BASE_Y + 2.0 + innerH / 2.0, tz);
+        tGrp.add(innerTank);
+
+        const fillH = innerH * spec.fillRatio;
+        const liquid = new THREE.Mesh(
+          new THREE.CylinderGeometry(R_TANK - 5.2, R_TANK - 5.2, fillH, 56),
+          lngLiquidMat
+        );
+        liquid.position.set(TANK_X, WALL_BASE_Y + 2.2 + fillH / 2.0, tz);
+        tGrp.add(liquid);
+
+        const surface = new THREE.Mesh(
+          new THREE.CylinderGeometry(R_TANK - 5.1, R_TANK - 5.1, 0.55, 56),
+          lngSurfaceRingMat
+        );
+        surface.position.set(TANK_X, WALL_BASE_Y + 2.2 + fillH + 0.25, tz);
+        tGrp.add(surface);
+      }}
+
+      // 5.6 External Spiral/Caged Stairway & Elevator Tower on NE quadrant of tank
+      const stairX = TANK_X + (R_TANK + 2.2) * 0.707;
+      const stairZ = tz - (R_TANK + 2.2) * 0.707;
+      const stairTower = new THREE.Mesh(
+        new THREE.BoxGeometry(3.4, H_WALL + 2.5, 3.4),
+        gratingDeckMat
+      );
+      stairTower.position.set(stairX, WALL_BASE_Y + (H_WALL + 2.5) / 2.0, stairZ);
+      stairTower.castShadow = true;
+      tGrp.add(stairTower);
+      for (let sy = 10.0; sy <= WALL_TOP_Y; sy += 8.0) {{
+        const landing = new THREE.Mesh(new THREE.BoxGeometry(4.2, 0.35, 4.2), railingMat);
+        landing.position.set(stairX, sy, stairZ);
+        tGrp.add(landing);
+      }}
+
+      // Inclined catwalk walkway climbing across the spherical dome from stair tower to roof valve platform
+      const domeWalk = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.25, R_TANK * 0.85), gratingDeckMat);
+      domeWalk.position.set(TANK_X + R_TANK * 0.28, WALL_TOP_Y + 6.8, tz - R_TANK * 0.28);
+      domeWalk.rotation.y = Math.PI / 4;
+      domeWalk.rotation.x = 0.24;
+      tGrp.add(domeWalk);
+
+      // 5.7 ROOF-TOP PIPING, PENTHOUSE & VALVE PLATFORM (Tank Çatı Üstü Borulama ve Vana Platformu)
+      const platY = DOME_APEX_Y + 0.6; // ~63.3m
+      // Support legs on dome crown
+      [[-7.5, -5.5], [7.5, -5.5], [-7.5, 5.5], [7.5, 5.5], [0, -5.5], [0, 5.5]].forEach(([lx, lz]) => {{
+        const leg = new THREE.Mesh(new THREE.CylinderGeometry(0.32, 0.32, 3.8, 10), steelMat);
+        leg.position.set(TANK_X + lx, platY - 1.8, tz + lz);
+        tGrp.add(leg);
+      }});
+      // Main structural steel grating platform deck (17m x 13m)
+      const roofDeck = new THREE.Mesh(new THREE.BoxGeometry(17.0, 0.45, 13.0), gratingDeckMat);
+      roofDeck.position.set(TANK_X, platY, tz);
+      roofDeck.castShadow = true;
+      tGrp.add(roofDeck);
+      // Yellow safety handrails around roof valve platform
+      const roofRailEdges = new THREE.EdgesGeometry(new THREE.BoxGeometry(16.8, 1.25, 12.8));
+      const roofRail = new THREE.LineSegments(roofRailEdges, new THREE.LineBasicMaterial({{ color: 0xeab308 }}));
+      roofRail.position.set(TANK_X, platY + 0.85, tz);
+      tGrp.add(roofRail);
+
+      // 3x Submerged In-Tank Cryogenic Pump Columns (P-101A/B/C) with green explosion-proof motors
+      [-4.2, 0.0, 4.2].forEach((pz) => {{
+        const colBarrel = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.85, 3.6, 16), compressionRingMat);
+        colBarrel.position.set(TANK_X + 2.8, platY + 1.8, tz + pz);
+        colBarrel.castShadow = true;
+        tGrp.add(colBarrel);
+
+        const pumpMotor = new THREE.Mesh(new THREE.CylinderGeometry(0.62, 0.62, 1.9, 16), greenValveMat);
+        pumpMotor.position.set(TANK_X + 2.8, platY + 4.4, tz + pz);
+        tGrp.add(pumpMotor);
+
+        // Discharge spool + green isolation valve + red ESDV on each pump column
+        const spool = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.28, 2.6, 10), steelMat);
+        spool.rotation.z = Math.PI / 2;
+        spool.position.set(TANK_X + 1.2, platY + 2.2, tz + pz);
+        tGrp.add(spool);
+
+        const esdvBody = new THREE.Mesh(new THREE.BoxGeometry(0.85, 1.1, 0.85), redValveMat);
+        esdvBody.position.set(TANK_X + 0.4, platY + 2.4, tz + pz);
+        tGrp.add(esdvBody);
+        const wheel = new THREE.Mesh(new THREE.TorusGeometry(0.42, 0.08, 8, 14), yellowMat);
+        wheel.rotation.x = Math.PI / 2;
+        wheel.position.set(TANK_X + 0.4, platY + 3.2, tz + pz);
+        tGrp.add(wheel);
+      }});
+
+      // Roof-top Liquid Fill Header (Blue/Cyan) & Top/Bottom Fill Nozzles with Red/Blue Valves
+      const roofFillHeader = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 9.6, 14), blueValveMat);
+      roofFillHeader.rotation.x = Math.PI / 2;
+      roofFillHeader.position.set(TANK_X - 3.2, platY + 1.4, tz);
+      tGrp.add(roofFillHeader);
+
+      [-3.2, 3.2].forEach((fz) => {{
+        const fillNozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.65, 2.2, 14), blueValveMat);
+        fillNozzle.position.set(TANK_X - 5.2, platY + 1.1, tz + fz);
+        tGrp.add(fillNozzle);
+        const ctrlValve = new THREE.Mesh(new THREE.BoxGeometry(0.9, 1.2, 0.9), redValveMat);
+        ctrlValve.position.set(TANK_X - 4.2, platY + 2.0, tz + fz);
+        tGrp.add(ctrlValve);
+        const hw = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.08, 8, 14), yellowMat);
+        hw.rotation.x = Math.PI / 2;
+        hw.position.set(TANK_X - 4.2, platY + 2.85, tz + fz);
+        tGrp.add(hw);
+      }});
+
+      // Roof-top Pump Discharge / Recirculation Collector Header (Green)
+      const roofRetHeader = new THREE.Mesh(new THREE.CylinderGeometry(0.40, 0.40, 9.6, 14), greenValveMat);
+      roofRetHeader.rotation.x = Math.PI / 2;
+      roofRetHeader.position.set(TANK_X - 0.6, platY + 2.2, tz);
+      tGrp.add(roofRetHeader);
+
+      // Roof-top Pressure / Vacuum Relief Breather Vents (PRV Goose-Necks) & BOG Dome Header
+      [-4.8, 4.8].forEach((vz) => {{
+        const ventStack = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.35, 3.8, 12), bogPipeMat);
+        ventStack.position.set(TANK_X + 6.2, platY + 1.9, tz + vz);
+        tGrp.add(ventStack);
+        const ventHood = new THREE.Mesh(new THREE.TorusGeometry(0.55, 0.22, 8, 14, Math.PI), bogPipeMat);
+        ventHood.position.set(TANK_X + 6.75, platY + 3.8, tz + vz);
+        tGrp.add(ventHood);
+      }});
+
+      // Cantilevered Roof Pipe Bridge from center Valve Platform out to Western Tank Rim (x = TANK_X - R_TANK)
+      const bridgeLen = R_TANK - 4.0;
+      const pipeBridge = new THREE.Mesh(new THREE.BoxGeometry(bridgeLen, 0.35, 5.2), gratingDeckMat);
+      pipeBridge.position.set(TANK_X - 4.0 - bridgeLen / 2.0, WALL_TOP_Y + 2.2, tz);
+      tGrp.add(pipeBridge);
+      [-2.5, 2.5].forEach(bz => {{
+        const brRail = new THREE.Mesh(new THREE.BoxGeometry(bridgeLen, 1.0, 0.12), railingMat);
+        brRail.position.set(TANK_X - 4.0 - bridgeLen / 2.0, WALL_TOP_Y + 2.85, tz + bz);
+        tGrp.add(brRail);
+      }});
+
+      tankFarmGroup.add(tGrp);
+    }}
+
+    TANK_SPECS.forEach(spec => createFullContainmentLNGTank(spec));
+
+    // 5.8 NFPA 59A / EN 1473 Secondary Impounding Basins (Dikes), Concrete Spill Trenches & Common Deep LNG Pit
+    (function buildImpoundingAndLNGPit() {{
+      const dikeWallMat = new THREE.MeshStandardMaterial({{ color: 0x64748b, roughness: 0.85 }});
+      const basinFloorMat = new THREE.MeshStandardMaterial({{ color: isNight ? 0x262f3d : 0x475569, roughness: 0.9 }});
+      const trenchWallMat = new THREE.MeshStandardMaterial({{ color: 0x94a3b8, roughness: 0.75 }});
+      const trenchFloorMat = new THREE.MeshStandardMaterial({{ color: 0x0f172a, roughness: 0.6 }});
+      const foamGenMat = new THREE.MeshStandardMaterial({{ color: 0xeab308, roughness: 0.35, metalness: 0.4 }});
+
+      const dikeSpan = 104.0;
+      const dikeH = 6.2;
+      const dikeThick = 1.8;
+
+      // Secondary containment basin (dike) around each of the 4 tanks
+      TANK_SPECS.forEach((spec) => {{
+        const tz = spec.z;
+        // Concrete impounding basin floor slab
+        const bFloor = new THREE.Mesh(new THREE.BoxGeometry(dikeSpan, 0.28, dikeSpan), basinFloorMat);
+        bFloor.position.set(TANK_X, 5.05, tz);
+        bFloor.receiveShadow = true;
+        tankFarmGroup.add(bFloor);
+
+        // 4 perimeter dike walls (North, South, West, East)
+        [-dikeSpan / 2.0, dikeSpan / 2.0].forEach(dz => {{
+          const nsWall = new THREE.Mesh(new THREE.BoxGeometry(dikeSpan + dikeThick, dikeH, dikeThick), dikeWallMat);
+          nsWall.position.set(TANK_X, 5.0 + dikeH / 2.0, tz + dz);
+          nsWall.castShadow = true;
+          nsWall.receiveShadow = true;
+          tankFarmGroup.add(nsWall);
+        }});
+        [-dikeSpan / 2.0, dikeSpan / 2.0].forEach(dx => {{
+          const ewWall = new THREE.Mesh(new THREE.BoxGeometry(dikeThick, dikeH, dikeSpan), dikeWallMat);
+          ewWall.position.set(TANK_X + dx, 5.0 + dikeH / 2.0, tz);
+          ewWall.castShadow = true;
+          ewWall.receiveShadow = true;
+          tankFarmGroup.add(ewWall);
+        }});
+
+        // Corner drainage sump inside each tank dike connected to the main LNG spill trench
+        const cornerSump = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.35, 6.5), trenchFloorMat);
+        cornerSump.position.set(TANK_X - dikeSpan / 2.0 + 4.5, 5.12, tz + dikeSpan / 2.0 - 4.5);
+        tankFarmGroup.add(cornerSump);
+
+        // Lateral concrete spill channel from tank basin sump to main collector trench
+        const branchTrench = new THREE.Mesh(new THREE.BoxGeometry(10.0, 0.45, 3.2), trenchFloorMat);
+        branchTrench.position.set(TANK_X - dikeSpan / 2.0 - 3.5, 5.14, tz + dikeSpan / 2.0 - 4.5);
+        tankFarmGroup.add(branchTrench);
+      }});
+
+      // Main North-South Open Concrete LNG Spill Collector Trench (from T-101 z=-195 south to Common LNG Pit z=295)
+      const trenchX = TANK_X - 59.5;
+      const trenchZStart = -200.0;
+      const trenchZEnd = 295.0;
+      const trenchLen = trenchZEnd - trenchZStart;
+      const trenchCenterZ = (trenchZStart + trenchZEnd) / 2.0;
+
+      const mainTrenchFloor = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.35, trenchLen), trenchFloorMat);
+      mainTrenchFloor.position.set(trenchX, 5.12, trenchCenterZ);
+      tankFarmGroup.add(mainTrenchFloor);
+      [-1.95, 1.95].forEach(tx => {{
+        const curb = new THREE.Mesh(new THREE.BoxGeometry(0.45, 1.1, trenchLen), trenchWallMat);
+        curb.position.set(trenchX + tx, 5.55, trenchCenterZ);
+        tankFarmGroup.add(curb);
+      }});
+
+      // COMMON DEEP LNG IMPOUNDING PIT / SUMP BASIN (Ortak Derin LNG Toplanma Çukuru - LNG Pit) at South end (z = 302)
+      const pitX = TANK_X - 18.0;
+      const pitZ = 302.0;
+      const pitW = 54.0, pitD = 38.0, pitWallH = 7.5;
+
+      // Pit floor & cryogenic blue liquid sump indicator
+      const pitFloor = new THREE.Mesh(new THREE.BoxGeometry(pitW, 0.4, pitD), trenchFloorMat);
+      pitFloor.position.set(pitX, 5.15, pitZ);
+      tankFarmGroup.add(pitFloor);
+
+      const pitCryoPool = new THREE.Mesh(
+        new THREE.BoxGeometry(pitW - 6.0, 0.45, pitD - 6.0),
+        lngLiquidMat
+      );
+      pitCryoPool.position.set(pitX, 5.35, pitZ);
+      tankFarmGroup.add(pitCryoPool);
+
+      // Concrete pit retaining walls + safety yellow handrails
+      [-pitD / 2.0, pitD / 2.0].forEach(pz => {{
+        const w = new THREE.Mesh(new THREE.BoxGeometry(pitW + 2.0, pitWallH, 2.0), dikeWallMat);
+        w.position.set(pitX, 5.0 + pitWallH / 2.0, pitZ + pz);
+        w.castShadow = true;
+        tankFarmGroup.add(w);
+      }});
+      [-pitW / 2.0, pitW / 2.0].forEach(px => {{
+        const w = new THREE.Mesh(new THREE.BoxGeometry(2.0, pitWallH, pitD), dikeWallMat);
+        w.position.set(pitX + px, 5.0 + pitWallH / 2.0, pitZ);
+        w.castShadow = true;
+        tankFarmGroup.add(w);
+      }});
+
+      // 6x High-Expansion Foam Generators (Yüksek Genleşmeli Köpük Jeneratörleri) mounted along LNG Pit walls
+      [-18.0, 0.0, 18.0].forEach(fx => {{
+        [-pitD / 2.0, pitD / 2.0].forEach(fz => {{
+          const foamBox = new THREE.Mesh(new THREE.BoxGeometry(2.8, 2.2, 2.4), foamGenMat);
+          foamBox.position.set(pitX + fx, 5.0 + pitWallH + 1.1, pitZ + fz);
+          foamBox.castShadow = true;
+          tankFarmGroup.add(foamBox);
+          const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.55, 0.75, 1.6, 12), redValveMat);
+          nozzle.rotation.x = fz < 0 ? Math.PI / 3 : -Math.PI / 3;
+          nozzle.position.set(pitX + fx, 5.0 + pitWallH + 1.0, pitZ + fz + (fz < 0 ? 1.4 : -1.4));
+          tankFarmGroup.add(nozzle);
+        }});
+      }});
+    }})();
+
+    // 5.9 Automation, SCADA & Central Control Building (Otomasyon ve Kontrol Binası) behind the tanks
+    (function buildAutomationAndControlBuilding() {{
+      const ctrlX = TANK_X + 114.0;
+      const ctrlZ = 0.0;
+      const bldgGroup = new THREE.Group();
+
+      const facadeMat = new THREE.MeshStandardMaterial({{ color: isNight ? 0xcbd5e1 : 0xe2e8f0, roughness: 0.55, metalness: 0.15 }});
+      const slateTrimMat = new THREE.MeshStandardMaterial({{ color: 0x1e293b, roughness: 0.6, metalness: 0.3 }});
+      const fasciaBlueMat = new THREE.MeshStandardMaterial({{ color: 0x0284c7, roughness: 0.35, metalness: 0.25 }});
+      const ctrlGlassMat = new THREE.MeshStandardMaterial({{
+        color: isNight ? 0x38bdf8 : 0x0f172a,
+        emissive: isNight ? 0x0284c7 : 0x075985,
+        emissiveIntensity: isNight ? 0.85 : 0.25,
+        roughness: 0.15,
+        metalness: 0.8
+      }});
+
+      // Main 2-Story SCADA & Central Control Room (CCR) Building (56m x 14m x 26m)
+      const mainBody = new THREE.Mesh(new THREE.BoxGeometry(26.0, 14.0, 56.0), facadeMat);
+      mainBody.position.set(ctrlX, 5.0 + 7.0, ctrlZ);
+      mainBody.castShadow = true;
+      mainBody.receiveShadow = true;
+      bldgGroup.add(mainBody);
+
+      // Corporate Blue Fascia Crown & Dark Slate Base Plinth
+      const crownBand = new THREE.Mesh(new THREE.BoxGeometry(26.6, 2.0, 56.6), fasciaBlueMat);
+      crownBand.position.set(ctrlX, 5.0 + 13.2, ctrlZ);
+      bldgGroup.add(crownBand);
+
+      const baseTrim = new THREE.Mesh(new THREE.BoxGeometry(26.4, 1.8, 56.4), slateTrimMat);
+      baseTrim.position.set(ctrlX, 5.0 + 0.9, ctrlZ);
+      bldgGroup.add(baseTrim);
+
+      // Panoramic Control Room Windows facing the 4 LNG Tanks (-x face)
+      const glassStrip = new THREE.Mesh(new THREE.BoxGeometry(0.4, 3.8, 46.0), ctrlGlassMat);
+      glassStrip.position.set(ctrlX - 13.05, 5.0 + 9.2, ctrlZ);
+      bldgGroup.add(glassStrip);
+
+      // Ground floor entrance canopy & glass lobby
+      const canopy = new THREE.Mesh(new THREE.BoxGeometry(6.5, 0.6, 16.0), fasciaBlueMat);
+      canopy.position.set(ctrlX - 15.5, 5.0 + 4.8, ctrlZ);
+      canopy.castShadow = true;
+      bldgGroup.add(canopy);
+
+      // Rooftop HVAC Chiller Skids & 32m SCADA / Radar Telecom Lattice Tower
+      [-14.0, 14.0].forEach(hz => {{
+        const hvac = new THREE.Mesh(new THREE.BoxGeometry(6.0, 2.6, 8.0), compressionRingMat);
+        hvac.position.set(ctrlX + 2.0, 5.0 + 15.3, ctrlZ + hz);
+        bldgGroup.add(hvac);
+      }});
+      const towerMast = new THREE.Mesh(new THREE.CylinderGeometry(0.35, 1.2, 26.0, 8), steelMat);
+      towerMast.position.set(ctrlX + 4.0, 5.0 + 14.0 + 13.0, ctrlZ);
+      bldgGroup.add(towerMast);
+      const beacon = new THREE.Mesh(
+        new THREE.SphereGeometry(0.65, 12, 12),
+        new THREE.MeshBasicMaterial({{ color: 0xff2222 }})
+      );
+      beacon.position.set(ctrlX + 4.0, 5.0 + 14.0 + 26.5, ctrlZ);
+      bldgGroup.add(beacon);
+
+      // Adjacent Electrical Substation / MCC Switchgear Building (North wing, z = -48) + 3 HV Transformers
+      const mccBldg = new THREE.Mesh(new THREE.BoxGeometry(20.0, 9.5, 28.0), facadeMat);
+      mccBldg.position.set(ctrlX, 5.0 + 4.75, ctrlZ - 48.0);
+      mccBldg.castShadow = true;
+      bldgGroup.add(mccBldg);
+      [-56.0, -48.0, -40.0].forEach(tz => {{
+        const xfmr = new THREE.Mesh(new THREE.BoxGeometry(4.2, 4.5, 4.2), compressionRingMat);
+        xfmr.position.set(ctrlX - 14.0, 5.0 + 2.25, tz);
+        bldgGroup.add(xfmr);
+      }});
+
+      // Adjacent BOG Compressor & Analyzer Building (South wing, z = +48)
+      const bogBldg = new THREE.Mesh(new THREE.BoxGeometry(22.0, 10.5, 30.0), facadeMat);
+      bogBldg.position.set(ctrlX, 5.0 + 5.25, ctrlZ + 48.0);
+      bogBldg.castShadow = true;
+      bldgGroup.add(bogBldg);
+
+      tankFarmGroup.add(bldgGroup);
+    }})();
+
+    // 5.10 Cryogenic Recirculation & Booster Pump Station Skid (P-201A/B/C)
+    const pumpSkidBase = new THREE.Mesh(new THREE.BoxGeometry(12.0, 1.2, 20.0), compressionRingMat);
+    pumpSkidBase.position.set(PUMP_X, 5.6, -18.0);
+    tankFarmGroup.add(pumpSkidBase);
+    [-24.0, -18.0, -12.0].forEach((pz) => {{
+      const pumpCan = new THREE.Mesh(new THREE.CylinderGeometry(1.4, 1.7, 4.2, 16), greenValveMat);
+      pumpCan.position.set(PUMP_X, 7.8, pz);
+      pumpCan.castShadow = true;
+      tankFarmGroup.add(pumpCan);
+      const motor = new THREE.Mesh(new THREE.CylinderGeometry(1.05, 1.05, 3.0, 16), steelMat);
+      motor.position.set(PUMP_X, 11.2, pz);
+      motor.castShadow = true;
+      tankFarmGroup.add(motor);
+    }});
+
+    terminalGroup.add(tankFarmGroup);
+
+    // 6. PIPELINES: supply route, parallel-offset return route, and 4-Tank Inter-Tank Supply/Return/BOG Network
 
     // Temperature-driven 1D gradient texture (TubeGeometry uv.x runs along length).
     function buildTempGradient(stationData, reverse) {{
@@ -1253,7 +1737,7 @@ def generate_terminal_3d_html(
         pts.push(new THREE.Vector3(x0 + OMEGA_W, 14, zOffset));
       }});
       pts.push(new THREE.Vector3(ROUTE_END - 20, 14, zOffset));
-      pts.push(new THREE.Vector3(ROUTE_END, 8, zOffset));
+      pts.push(new THREE.Vector3(ROUTE_END, 14, zOffset));
       return pts;
     }}
 
@@ -1321,17 +1805,6 @@ def generate_terminal_3d_html(
     mainPipe.userData.lineType = "main";
     terminalGroup.add(mainPipe);
 
-    // Tank inlet extension (follows supply line z)
-    const tankLeadInCurve = buildRoundedPath([
-      new THREE.Vector3(ROUTE_END, 8, MAIN_Z),
-      new THREE.Vector3(ROUTE_END + (TANK_X - ROUTE_END) * 0.4, 18, MAIN_Z),
-      new THREE.Vector3(ROUTE_END + (TANK_X - ROUTE_END) * 0.8, 48, MAIN_Z),
-      new THREE.Vector3(TANK_X, 52, MAIN_Z)
-    ], 3.0);
-    const tankLeadIn = new THREE.Mesh(new THREE.TubeGeometry(tankLeadInCurve, 30, mainRadius, 16, false), mainPipeMat);
-    tankLeadIn.castShadow = true;
-    terminalGroup.add(tankLeadIn);
-
     // Return / recirculation line: true parallel offset of the supply route.
     const returnPts = offsetPolyline(mainPts, parallelOffset);
     const recircCurve = buildRoundedPath(returnPts, Math.max(2.0, retRadius * 2.5));
@@ -1345,15 +1818,131 @@ def generate_terminal_3d_html(
     recircPipe.userData.lineType = "return";
     terminalGroup.add(recircPipe);
 
-    // Connect pump P-201 to the actual return-route end (parallel offset).
     const returnEndZ = returnPts[returnPts.length - 1].z;
-    const pumpConnectCurve = buildRoundedPath([
-      new THREE.Vector3(PUMP_X, 4, -18),
-      new THREE.Vector3(PUMP_X, 8, returnEndZ - 4),
-      new THREE.Vector3(ROUTE_END, 8, returnEndZ)
-    ], 2.0);
-    const pumpConnect = new THREE.Mesh(new THREE.TubeGeometry(pumpConnectCurve, 16, retRadius, 12, false), recircPipeMat);
-    terminalGroup.add(pumpConnect);
+
+    // 6.2 INTER-TANK PIPING NETWORK (4 Tank Arası Gidiş, Dönüş ve BOG Kolektörleri + Tank Çatı İniş Boruları)
+    (function buildInterTankPiping() {{
+      const rackMat = new THREE.MeshStandardMaterial({{ color: 0x475569, roughness: 0.6, metalness: 0.5 }});
+      const supplyHeaderX = TANK_HEADER_X;
+      const returnHeaderX = TANK_HEADER_X - 3.8;
+      const bogHeaderX = TANK_HEADER_X + 3.2;
+      const zMinH = TANK_SPECS[0].z;
+      const zMaxH = TANK_SPECS[TANK_SPECS.length - 1].z;
+
+      // Elevated Steel Pipe Rack Portals along the front of all 4 tanks (z = -195..+195)
+      for (let z = zMinH; z <= zMaxH; z += 26.0) {{
+        [-4.5, 4.0].forEach(dx => {{
+          const col = new THREE.Mesh(new THREE.BoxGeometry(0.65, 13.5, 0.65), rackMat);
+          col.position.set(supplyHeaderX + dx, 5.0 + 6.75, z);
+          terminalGroup.add(col);
+        }});
+        const beam1 = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.55, 0.65), rackMat);
+        beam1.position.set(supplyHeaderX - 0.25, 11.8, z);
+        terminalGroup.add(beam1);
+        const beam2 = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.55, 0.65), rackMat);
+        beam2.position.set(supplyHeaderX - 0.25, 14.2, z);
+        terminalGroup.add(beam2);
+        const beam3 = new THREE.Mesh(new THREE.BoxGeometry(9.6, 0.55, 0.65), rackMat);
+        beam3.position.set(supplyHeaderX - 0.25, 17.0, z);
+        terminalGroup.add(beam3);
+      }}
+
+      // A) Main Supply (Gidiş) Tie-In from Trestle End (ROUTE_END) to Inter-Tank Supply Header
+      const supplyTieCurve = buildRoundedPath([
+        new THREE.Vector3(ROUTE_END, 14.0, MAIN_Z),
+        new THREE.Vector3( supplyHeaderX, 14.8, MAIN_Z)
+      ], 2.5);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(supplyTieCurve, 24, mainRadius, 14, false), mainPipeMat));
+
+      // North-South Main Supply Distribution Header (Gidiş Kolektörü) spanning T-101..T-104
+      const supplyHeaderCurve = new THREE.LineCurve3(
+        new THREE.Vector3(supplyHeaderX, 14.8, zMinH - 3.0),
+        new THREE.Vector3(supplyHeaderX, 14.8, zMaxH + 3.0)
+      );
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(supplyHeaderCurve, 40, mainRadius * 0.92, 16, false), mainPipeMat));
+
+      // B) Return / Recirculation (Dönüş) Collector Header spanning T-101..T-104 & connecting via P-201 Pump Skid
+      const returnHeaderCurve = new THREE.LineCurve3(
+        new THREE.Vector3(returnHeaderX, 12.4, zMinH + 3.0),
+        new THREE.Vector3(returnHeaderX, 12.4, zMaxH + 3.0)
+      );
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(returnHeaderCurve, 40, retRadius * 0.95, 14, false), recircPipeMat));
+
+      // Connect Return Header -> P-201 Pump Station Suction & P-201 Discharge -> Marine Return Line (recircPipe)
+      const pumpSuctionCurve = buildRoundedPath([
+        new THREE.Vector3(returnHeaderX, 12.4, -12.0),
+        new THREE.Vector3(PUMP_X + 2.5, 12.4, -12.0),
+        new THREE.Vector3(PUMP_X + 2.5, 7.8, -18.0)
+      ], 2.0);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(pumpSuctionCurve, 20, retRadius, 12, false), recircPipeMat));
+
+      const pumpDischargeCurve = buildRoundedPath([
+        new THREE.Vector3(PUMP_X - 1.5, 7.8, -18.0),
+        new THREE.Vector3(PUMP_X - 1.5, 14.0, returnEndZ),
+        new THREE.Vector3(ROUTE_END, 14.0, returnEndZ)
+      ], 2.0);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(pumpDischargeCurve, 20, retRadius, 12, false), recircPipeMat));
+
+      // C) Overhead BOG Vapor Header connecting all 4 tanks and running east to the BOG Compressor Building
+      const bogHeaderCurve = new THREE.LineCurve3(
+        new THREE.Vector3(bogHeaderX, 17.6, zMinH),
+        new THREE.Vector3(bogHeaderX, 17.6, zMaxH)
+      );
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogHeaderCurve, 32, retRadius * 0.85, 12, false), bogPipeMat));
+
+      const bogToCompressorCurve = buildRoundedPath([
+        new THREE.Vector3(bogHeaderX, 17.6, 125.0),
+        new THREE.Vector3(TANK_X + 114.0, 17.6, 125.0),
+        new THREE.Vector3(TANK_X + 114.0, 12.0, 62.0)
+      ], 3.0);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogToCompressorCurve, 28, retRadius * 0.8, 12, false), bogPipeMat));
+
+      // D) Per-Tank Branch Risers (Gidiş, Dönüş & BOG) climbing up each tank wall to its Roof Valve Platform!
+      const riserX = TANK_X - R_TANK - 1.4;
+      const roofTopY = DOME_APEX_Y + 2.0;
+
+      TANK_SPECS.forEach((spec) => {{
+        const tz = spec.z;
+        const zSup = tz - 1.8;
+        const zRet = tz + 1.8;
+        const zBog = tz;
+
+        // 1. Supply (Gidiş) Riser: Header -> ESDV Valve -> Vertical Riser up Tank Wall -> Roof Bridge -> Roof Fill Header
+        const supRiser = buildRoundedPath([
+          new THREE.Vector3(supplyHeaderX, 14.8, zSup),
+          new THREE.Vector3(riserX, 14.8, zSup),
+          new THREE.Vector3(riserX, WALL_TOP_Y + 2.8, zSup),
+          new THREE.Vector3(TANK_X - 3.2, roofTopY, zSup)
+        ], 2.2);
+        terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(supRiser, 36, mainRadius * 0.72, 14, false), mainPipeMat));
+
+        // 2. Return (Dönüş) Riser: Roof Pump Discharge Header -> Roof Bridge -> Vertical Riser down Tank Wall -> Return Header
+        const retRiser = buildRoundedPath([
+          new THREE.Vector3(TANK_X - 0.6, roofTopY + 0.6, zRet),
+          new THREE.Vector3(riserX - 1.1, WALL_TOP_Y + 2.8, zRet),
+          new THREE.Vector3(riserX - 1.1, 12.4, zRet),
+          new THREE.Vector3(returnHeaderX, 12.4, zRet)
+        ], 2.0);
+        terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(retRiser, 36, retRadius * 0.82, 12, false), recircPipeMat));
+
+        // 3. BOG Vapor Riser: Roof Dome -> Vertical Riser -> Overhead BOG Collector Header
+        const bogRiser = buildRoundedPath([
+          new THREE.Vector3(TANK_X + 2.0, roofTopY + 1.0, zBog),
+          new THREE.Vector3(riserX + 0.6, WALL_TOP_Y + 3.4, zBog),
+          new THREE.Vector3(riserX + 0.6, 17.6, zBog),
+          new THREE.Vector3(bogHeaderX, 17.6, zBog)
+        ], 2.0);
+        terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogRiser, 32, retRadius * 0.68, 10, false), bogPipeMat));
+
+        // Ground-level Tank Inlet/Outlet ESDV Manifold Valve Skid at each tank branch
+        const esdvSup = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.2, 1.5), redValveMat);
+        esdvSup.position.set((supplyHeaderX + riserX) / 2.0, 15.2, zSup);
+        terminalGroup.add(esdvSup);
+        const esdvRet = new THREE.Mesh(new THREE.BoxGeometry(1.3, 1.9, 1.3), greenValveMat);
+        esdvRet.position.set((returnHeaderX + riserX) / 2.0, 12.8, zRet);
+        terminalGroup.add(esdvRet);
+      }});
+    }})();
 
     // Integrity self-check: supply and return centerlines must not interpenetrate.
     (function checkNonOverlap() {{
@@ -1440,7 +2029,8 @@ def generate_terminal_3d_html(
       overview: {{ cam: new THREE.Vector3(SCENE_CX, OVERVIEW_DIST * 0.35, OVERVIEW_DIST * 0.75), tgt: new THREE.Vector3(SCENE_CX, 10, 0) }},
       lup: {{ cam: new THREE.Vector3(-150, 40, 70), tgt: new THREE.Vector3(-120, 15, 0) }},
       omega: {{ cam: new THREE.Vector3(ROUTE_END * 0.5, 160, 140), tgt: new THREE.Vector3(ROUTE_END * 0.5, 12, 11) }},
-      tank: {{ cam: new THREE.Vector3(TANK_X - 70, 90, 180), tgt: new THREE.Vector3(TANK_X, 30, 0) }}
+      tank: {{ cam: new THREE.Vector3(TANK_X - 180, 140, 310), tgt: new THREE.Vector3(TANK_X + 20, 32, 0) }},
+      roof: {{ cam: new THREE.Vector3(TANK_X - 65, 92, 140), tgt: new THREE.Vector3(TANK_X, 58, 65) }}
     }};
 
     let targetCamPos = camera.position.clone();
