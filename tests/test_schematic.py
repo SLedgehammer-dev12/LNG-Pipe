@@ -165,3 +165,32 @@ def test_terminal_3d_four_tanks_spherical_dome_roof_piping_lng_pit_and_control_b
     assert "eastRoadX" in html
 
 
+def test_bog_and_flare_line_and_flare_stack_in_2d_and_3d(sample_simulation_results):
+    html_3d = generate_terminal_3d_html(sample_simulation_results, length_m=500.0)
+    html_2d = generate_schematic_2d_html(sample_simulation_results, length_m=500.0)
+
+    # 3D BOG line, Recondenser V-301, Flare header, KO Drum V-401, and 84m Derrick Flare Stack F-401
+    assert "marineBogCurve" in html_3d
+    assert "bogHeaderCurve" in html_3d
+    assert "bogToCompressorCurve" in html_3d
+    assert "recondenser" in html_3d
+    assert "tankFlareRiser" in html_3d
+    assert "bogToFlareCurve" in html_3d
+    assert "flareHeaderCurve" in html_3d
+    assert "koDrumGroup" in html_3d
+    assert "flareStackGroup" in html_3d
+    assert "flareRiserPipe" in html_3d
+    assert "flareFlameGroup" in html_3d
+    assert "flareLight" in html_3d
+    assert "bogParticles" in html_3d
+    assert "flareParticles" in html_3d
+    assert "setCameraView('flare'" in html_3d
+
+    # 2D P&ID schematic BOG Compressor K-301, KO Drum V-401, Flare line & Flare Stack F-401
+    assert "FLARE (F-401)" in html_2d
+    assert "V-401" in html_2d
+    assert "BOG KOMP." in html_2d
+    assert "Flare Tahliye Hattı" in html_2d
+
+
+

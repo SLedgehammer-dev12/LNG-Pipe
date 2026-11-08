@@ -115,7 +115,8 @@ def generate_terminal_3d_html(
     legend_items = [
         (f"Ana LNG Hattı (ID {main_id:.0f} mm · t {main_wall:.1f} mm)", "#00d2ff"),
         (f"Dönüş Hattı (ID {return_diameter_mm:.0f} mm · t {return_wall_mm:.1f} mm)", "#39d353"),
-        ("BOG Gaz Geri Dönüş", "#f0883e"),
+        ("BOG (Boil-Off Gas) Buhar Hattı", "#38bdf8"),
+        ("Flare (Meşale) Hattı & Baca (F-401)", "#f97316"),
         ("Omega Döngüsü & TRV", "#d2a8ff"),
         ("Pipe Rack & Uzun Yarıçap Dirsek", "#8b949e"),
     ]
@@ -345,6 +346,7 @@ def generate_terminal_3d_html(
       <button class="cam-btn" onclick="setCameraView('omega', this)">➰ Omega Dolfenleri</button>
       <button class="cam-btn" onclick="setCameraView('tank', this)">🏢 4x Tank Sahası & Kontrol</button>
       <button class="cam-btn" onclick="setCameraView('roof', this)">🏗️ Çatı Vana & LNG Pit</button>
+      <button class="cam-btn" onclick="setCameraView('flare', this)">🔥 BOG & Flare Bacası</button>
       <button class="cam-btn" onclick="resetControls()">⟲ Sıfırla</button>
     </div>
   </div>
@@ -1819,13 +1821,28 @@ def generate_terminal_3d_html(
     terminalGroup.add(recircPipe);
 
     const returnEndZ = returnPts[returnPts.length - 1].z;
+    const flarePipeMat = new THREE.MeshStandardMaterial({{
+      color: 0xf97316,
+      roughness: 0.32,
+      metalness: 0.55,
+      emissive: 0x3b1100,
+      emissiveIntensity: 0.28
+    }});
+    const FLARE_X = TANK_X + 148.0;
+    const FLARE_Z = -312.0;
+    const H_FLARE = 84.0;
+    let bogParticleCurve = null;
+    let flareParticleCurve = null;
+    const flareFlameGroup = new THREE.Group();
+    let flareLight = null;
 
-    // 6.2 INTER-TANK PIPING NETWORK (4 Tank Arası Gidiş, Dönüş ve BOG Kolektörleri + Tank Çatı İniş Boruları)
+    // 6.2 INTER-TANK PIPING NETWORK (4 Tank Arası Gidiş, Dönüş, BOG ve Flare Kolektörleri + Tank Çatı İniş Boruları)
     (function buildInterTankPiping() {{
       const rackMat = new THREE.MeshStandardMaterial({{ color: 0x475569, roughness: 0.6, metalness: 0.5 }});
       const supplyHeaderX = TANK_HEADER_X;
       const returnHeaderX = TANK_HEADER_X - 3.8;
       const bogHeaderX = TANK_HEADER_X + 3.2;
+      const flareReliefHeaderX = TANK_X + 56.0;
       const zMinH = TANK_SPECS[0].z;
       const zMaxH = TANK_SPECS[TANK_SPECS.length - 1].z;
 
@@ -1850,7 +1867,7 @@ def generate_terminal_3d_html(
       // A) Main Supply (Gidiş) Tie-In from Trestle End (ROUTE_END) to Inter-Tank Supply Header
       const supplyTieCurve = buildRoundedPath([
         new THREE.Vector3(ROUTE_END, 14.0, MAIN_Z),
-        new THREE.Vector3( supplyHeaderX, 14.8, MAIN_Z)
+        new THREE.Vector3(supplyHeaderX, 14.8, MAIN_Z)
       ], 2.5);
       terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(supplyTieCurve, 24, mainRadius, 14, false), mainPipeMat));
 
@@ -1883,22 +1900,44 @@ def generate_terminal_3d_html(
       ], 2.0);
       terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(pumpDischargeCurve, 20, retRadius, 12, false), recircPipeMat));
 
-      // C) Overhead BOG Vapor Header connecting all 4 tanks and running east to the BOG Compressor Building
+      // C) COMPLETE BOG (BOIL-OFF GAS) VAPOR LINE NETWORK (BOG Hattı):
+      //    1. Marine Vapor Return & BOG Line from LUP Dolphin along Trestle to Onshore BOG Collector Header
+      const marineBogCurve = buildRoundedPath([
+        new THREE.Vector3(ROUTE_START, 16.2, 0.0),
+        new THREE.Vector3(ROUTE_END, 16.2, 0.0),
+        new THREE.Vector3(bogHeaderX, 17.6, 0.0)
+      ], 2.5);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(marineBogCurve, 48, retRadius * 0.78, 12, false), bogPipeMat));
+
+      //    2. North-South Overhead BOG Vapor Collector Header connecting all 4 tanks (T-101..T-104)
       const bogHeaderCurve = new THREE.LineCurve3(
         new THREE.Vector3(bogHeaderX, 17.6, zMinH),
         new THREE.Vector3(bogHeaderX, 17.6, zMaxH)
       );
-      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogHeaderCurve, 32, retRadius * 0.85, 12, false), bogPipeMat));
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogHeaderCurve, 36, retRadius * 0.88, 12, false), bogPipeMat));
 
+      //    3. BOG Transfer Header from Tank Farm to BOG Compressor & Recondenser Station (V-301 & K-301)
       const bogToCompressorCurve = buildRoundedPath([
+        new THREE.Vector3(bogHeaderX, 17.6, zMinH),
         new THREE.Vector3(bogHeaderX, 17.6, 125.0),
-        new THREE.Vector3(TANK_X + 114.0, 17.6, 125.0),
-        new THREE.Vector3(TANK_X + 114.0, 12.0, 62.0)
+        new THREE.Vector3(TANK_X + 102.0, 17.6, 125.0),
+        new THREE.Vector3(TANK_X + 102.0, 13.5, 52.0)
       ], 3.0);
-      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogToCompressorCurve, 28, retRadius * 0.8, 12, false), bogPipeMat));
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogToCompressorCurve, 36, retRadius * 0.85, 12, false), bogPipeMat));
+      bogParticleCurve = bogToCompressorCurve;
 
-      // D) Per-Tank Branch Risers (Gidiş, Dönüş & BOG) climbing up each tank wall to its Roof Valve Platform!
+      //    4. Vertical Cryogenic BOG Recondenser Column (V-301) & Suction Knock-Out Drum outside BOG Compressor Building
+      const recondenser = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 2.2, 13.5, 20), bogPipeMat);
+      recondenser.position.set(TANK_X + 100.0, 5.0 + 6.75, 58.0);
+      recondenser.castShadow = true;
+      terminalGroup.add(recondenser);
+      const recondDome = new THREE.Mesh(new THREE.SphereGeometry(2.2, 20, 12, 0, Math.PI * 2, 0, Math.PI / 2), bogPipeMat);
+      recondDome.position.set(TANK_X + 100.0, 5.0 + 13.5, 58.0);
+      terminalGroup.add(recondDome);
+
+      // D) Per-Tank Branch Risers (Gidiş, Dönüş, BOG & Emergency Flare Relief) climbing up each tank wall
       const riserX = TANK_X - R_TANK - 1.4;
+      const eastRiserX = TANK_X + R_TANK + 1.4;
       const roofTopY = DOME_APEX_Y + 2.0;
 
       TANK_SPECS.forEach((spec) => {{
@@ -1934,6 +1973,15 @@ def generate_terminal_3d_html(
         ], 2.0);
         terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogRiser, 32, retRadius * 0.68, 10, false), bogPipeMat));
 
+        // 4. Tank Roof Overpressure / Emergency Flare Relief Riser (East face of each tank -> East Flare Relief Header)
+        const tankFlareRiser = buildRoundedPath([
+          new THREE.Vector3(TANK_X + 6.2, roofTopY + 1.2, tz + 4.8),
+          new THREE.Vector3(eastRiserX, WALL_TOP_Y + 2.8, tz + 4.8),
+          new THREE.Vector3(eastRiserX, 16.2, tz + 4.8),
+          new THREE.Vector3(flareReliefHeaderX, 16.2, tz + 4.8)
+        ], 2.0);
+        terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(tankFlareRiser, 32, retRadius * 0.62, 10, false), flarePipeMat));
+
         // Ground-level Tank Inlet/Outlet ESDV Manifold Valve Skid at each tank branch
         const esdvSup = new THREE.Mesh(new THREE.BoxGeometry(1.5, 2.2, 1.5), redValveMat);
         esdvSup.position.set((supplyHeaderX + riserX) / 2.0, 15.2, zSup);
@@ -1942,6 +1990,225 @@ def generate_terminal_3d_html(
         esdvRet.position.set((returnHeaderX + riserX) / 2.0, 12.8, zRet);
         terminalGroup.add(esdvRet);
       }});
+
+      // E) COMPLETE FLARE LINE (Flare Hattı), KNOCK-OUT DRUM (V-401) & ELEVATED FLARE STACK (F-401 Flare Bacası)
+      //    1. East Flare Relief Collector Header running behind all 4 tanks (z = +200 -> -260) into KO Drum V-401
+      const koDrumX = FLARE_X - 28.0;
+      const koDrumZ = FLARE_Z + 22.0;
+
+      // Pipe rack supports along the East Flare Relief Header
+      for (let z = -260.0; z <= 200.0; z += 32.0) {{
+        const fCol = new THREE.Mesh(new THREE.BoxGeometry(0.6, 11.5, 0.6), rackMat);
+        fCol.position.set(flareReliefHeaderX, 5.0 + 5.75, z);
+        terminalGroup.add(fCol);
+        const fCap = new THREE.Mesh(new THREE.BoxGeometry(2.6, 0.5, 0.6), rackMat);
+        fCap.position.set(flareReliefHeaderX, 15.6, z);
+        terminalGroup.add(fCap);
+      }}
+
+      // BOG Compressor Excess / Blowdown Branch into Main Flare Header
+      const bogToFlareCurve = buildRoundedPath([
+        new THREE.Vector3(TANK_X + 114.0, 13.5, 36.0),
+        new THREE.Vector3(TANK_X + 92.0, 16.2, 36.0),
+        new THREE.Vector3(flareReliefHeaderX, 16.2, 36.0)
+      ], 2.5);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(bogToFlareCurve, 24, retRadius * 0.75, 12, false), flarePipeMat));
+
+      // Main Flare Header from South Tank T-104 (z = +200) northwards to Flare KO Drum V-401 & up the F-401 Flare Stack
+      const flareHeaderCurve = buildRoundedPath([
+        new THREE.Vector3(flareReliefHeaderX, 16.2, zMaxH + 4.8),
+        new THREE.Vector3(flareReliefHeaderX, 16.2, koDrumZ),
+        new THREE.Vector3(koDrumX - 8.0, 16.2, koDrumZ),
+        new THREE.Vector3(koDrumX - 8.0, 9.8, koDrumZ),
+        new THREE.Vector3(FLARE_X, 9.8, FLARE_Z),
+        new THREE.Vector3(FLARE_X, 5.0 + H_FLARE + 4.5, FLARE_Z)
+      ], 2.8);
+      terminalGroup.add(new THREE.Mesh(new THREE.TubeGeometry(flareHeaderCurve, 80, retRadius * 0.92, 14, false), flarePipeMat));
+      flareParticleCurve = flareHeaderCurve;
+
+      //    2. Flare Knock-Out (KO) Drum V-401 (Horizontal Liquid Separator) & Water Seal Drum V-402
+      const koDrumGroup = new THREE.Group();
+      const koVesselMat = new THREE.MeshStandardMaterial({{ color: 0x94a3b8, roughness: 0.4, metalness: 0.65 }});
+      const koCyl = new THREE.Mesh(new THREE.CylinderGeometry(3.2, 3.2, 18.0, 24), koVesselMat);
+      koCyl.rotation.z = Math.PI / 2;
+      koCyl.position.set(koDrumX, 9.8, koDrumZ);
+      koCyl.castShadow = true;
+      koDrumGroup.add(koCyl);
+      [-9.0, 9.0].forEach(dx => {{
+        const cap = new THREE.Mesh(new THREE.SphereGeometry(3.2, 20, 12), koVesselMat);
+        cap.scale.set(0.55, 1.0, 1.0);
+        cap.position.set(koDrumX + dx, 9.8, koDrumZ);
+        koDrumGroup.add(cap);
+      }});
+      // Orange Flare Identification Band on KO Drum V-401
+      const koBand = new THREE.Mesh(new THREE.CylinderGeometry(3.26, 3.26, 2.2, 24), flarePipeMat);
+      koBand.rotation.z = Math.PI / 2;
+      koBand.position.set(koDrumX, 9.8, koDrumZ);
+      koDrumGroup.add(koBand);
+      // Concrete saddles under KO Drum V-401
+      [-5.5, 5.5].forEach(dx => {{
+        const saddle = new THREE.Mesh(new THREE.BoxGeometry(1.6, 4.2, 5.8), compressionRingMat);
+        saddle.position.set(koDrumX + dx, 5.0 + 2.1, koDrumZ);
+        koDrumGroup.add(saddle);
+      }});
+
+      // Vertical Liquid Seal Drum V-402 at base of Flare Stack
+      const sealDrum = new THREE.Mesh(new THREE.CylinderGeometry(2.6, 2.6, 8.5, 20), koVesselMat);
+      sealDrum.position.set(FLARE_X - 7.5, 5.0 + 4.25, FLARE_Z + 6.5);
+      sealDrum.castShadow = true;
+      koDrumGroup.add(sealDrum);
+      terminalGroup.add(koDrumGroup);
+
+      //    3. ELEVATED DERRICK-SUPPORTED FLARE STACK (F-401 Flare Bacası, Height = 84m)
+      const flareStackGroup = new THREE.Group();
+
+      // Sterile thermal radiation exclusion zone gravel pad + safety perimeter rail
+      const flareZonePad = new THREE.Mesh(
+        new THREE.CylinderGeometry(28.0, 30.0, 0.4, 36),
+        new THREE.MeshStandardMaterial({{ color: isNight ? 0x2d2620 : 0x7c6f64, roughness: 0.92 }})
+      );
+      flareZonePad.position.set(FLARE_X, 5.05, FLARE_Z);
+      flareZonePad.receiveShadow = true;
+      flareStackGroup.add(flareZonePad);
+
+      const zoneFence = new THREE.Mesh(new THREE.TorusGeometry(27.5, 0.18, 8, 48), railingMat);
+      zoneFence.rotation.x = Math.PI / 2;
+      zoneFence.position.set(FLARE_X, 6.2, FLARE_Z);
+      flareStackGroup.add(zoneFence);
+
+      // Heavy concrete octagonal foundation pedestal
+      const flarePedestal = new THREE.Mesh(new THREE.CylinderGeometry(8.5, 10.0, 3.2, 8), compressionRingMat);
+      flarePedestal.position.set(FLARE_X, 5.0 + 1.6, FLARE_Z);
+      flarePedestal.castShadow = true;
+      flareStackGroup.add(flarePedestal);
+
+      // Central Stainless Steel Flare Riser Stack (84m tall)
+      const riserMat = new THREE.MeshStandardMaterial({{ color: 0xcbd5e1, roughness: 0.3, metalness: 0.85 }});
+      const flareRiserPipe = new THREE.Mesh(new THREE.CylinderGeometry(1.15, 1.45, H_FLARE, 20), riserMat);
+      flareRiserPipe.position.set(FLARE_X, 5.0 + H_FLARE / 2.0, FLARE_Z);
+      flareRiserPipe.castShadow = true;
+      flareStackGroup.add(flareRiserPipe);
+
+      // 4-Legged Structural Steel Derrick Lattice Tower supporting the 84m Flare Riser
+      const baseSpread = 5.4;
+      const topSpread = 2.6;
+      const derrickRedMat = new THREE.MeshStandardMaterial({{ color: 0xdc2626, roughness: 0.45, metalness: 0.4 }});
+      const derrickWhiteMat = new THREE.MeshStandardMaterial({{ color: 0xf8fafc, roughness: 0.45, metalness: 0.3 }});
+
+      const nBays = 8;
+      const bayH = H_FLARE / nBays;
+      for (let b = 0; b < nBays; b++) {{
+        const f0 = b / nBays;
+        const f1 = (b + 1) / nBays;
+        const y0 = 5.0 + f0 * H_FLARE;
+        const y1 = 5.0 + f1 * H_FLARE;
+        const ym = (y0 + y1) / 2.0;
+        const s0 = baseSpread + (topSpread - baseSpread) * f0;
+        const s1 = baseSpread + (topSpread - baseSpread) * f1;
+        const sm = (s0 + s1) / 2.0;
+        // Upper 3 bays painted in Red/White aviation obstruction warning bands
+        const bayMat = b >= 5 ? (b % 2 === 1 ? derrickRedMat : derrickWhiteMat) : steelMat;
+
+        [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([sx, sz]) => {{
+          const legSeg = new THREE.Mesh(new THREE.CylinderGeometry(0.28, 0.32, bayH + 0.3, 8), bayMat);
+          legSeg.position.set(FLARE_X + sx * sm, ym, FLARE_Z + sz * sm);
+          legSeg.castShadow = true;
+          flareStackGroup.add(legSeg);
+        }});
+
+        // Horizontal ring struts & diagonal X-bracing on all 4 faces of each bay
+        const hBraceLen = s1 * 2.0;
+        [-s1, s1].forEach(offset => {{
+          const strutX = new THREE.Mesh(new THREE.BoxGeometry(hBraceLen, 0.28, 0.28), bayMat);
+          strutX.position.set(FLARE_X, y1, FLARE_Z + offset);
+          flareStackGroup.add(strutX);
+          const strutZ = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.28, hBraceLen), bayMat);
+          strutZ.position.set(FLARE_X + offset, y1, FLARE_Z);
+          flareStackGroup.add(strutZ);
+        }});
+
+        const diagLen = Math.hypot(sm * 2.0, bayH);
+        const diagAngle = Math.atan2(sm * 2.0, bayH);
+        [-sm, sm].forEach(faceOff => {{
+          [diagAngle, -diagAngle].forEach(ang => {{
+            const diag = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.12, diagLen, 6), bayMat);
+            diag.position.set(FLARE_X, ym, FLARE_Z + faceOff);
+            diag.rotation.z = ang;
+            flareStackGroup.add(diag);
+          }});
+        }});
+      }}
+
+      // 3 Circular Service & Pilot Inspection Platforms along Flare Stack (y = 33m, 58m, 84m)
+      [33.0, 58.0, 84.0].forEach((py, idx) => {{
+        const platR = 5.2 - idx * 0.7;
+        const plat = new THREE.Mesh(new THREE.CylinderGeometry(platR, platR, 0.35, 24), gratingDeckMat);
+        plat.position.set(FLARE_X, py, FLARE_Z);
+        flareStackGroup.add(plat);
+        const pRail = new THREE.Mesh(new THREE.TorusGeometry(platR - 0.1, 0.14, 8, 24), railingMat);
+        pRail.rotation.x = Math.PI / 2;
+        pRail.position.set(FLARE_X, py + 1.0, FLARE_Z);
+        flareStackGroup.add(pRail);
+      }});
+
+      // High-Temp Stainless Sonic Flare Tip, Windshield Shroud & 3 Pilot Burners at Top (y = 89m..94.5m)
+      const tipBaseY = 5.0 + H_FLARE;
+      const flareTipShroud = new THREE.Mesh(
+        new THREE.CylinderGeometry(1.75, 1.25, 5.2, 20),
+        new THREE.MeshStandardMaterial({{ color: 0x334155, roughness: 0.35, metalness: 0.85 }})
+      );
+      flareTipShroud.position.set(FLARE_X, tipBaseY + 2.6, FLARE_Z);
+      flareStackGroup.add(flareTipShroud);
+
+      // 3 Pilot Gas Ignition Nozzles around the Flare Tip
+      [0, (Math.PI * 2) / 3, (Math.PI * 4) / 3].forEach(ang => {{
+        const pilot = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.14, 3.2, 8), flarePipeMat);
+        pilot.position.set(FLARE_X + Math.cos(ang) * 1.65, tipBaseY + 3.8, FLARE_Z + Math.sin(ang) * 1.65);
+        pilot.rotation.z = -Math.cos(ang) * 0.25;
+        pilot.rotation.x = Math.sin(ang) * 0.25;
+        flareStackGroup.add(pilot);
+      }});
+
+      //    4. ANIMATED 3-LAYER 3D FLARE FLAME (Alev & Pilot Ateşi) + Dynamic PointLight
+      const flameBaseY = tipBaseY + 5.0; // y = 94.0m
+      flareFlameGroup.position.set(FLARE_X, flameBaseY, FLARE_Z);
+
+      // Outer crimson-orange translucent flame envelope
+      const outerFlameGeo = new THREE.ConeGeometry(3.4, 15.5, 20);
+      outerFlameGeo.translate(0, 7.75, 0);
+      const outerFlameMat = new THREE.MeshBasicMaterial({{
+        color: 0xea580c,
+        transparent: true,
+        opacity: 0.58
+      }});
+      const outerFlame = new THREE.Mesh(outerFlameGeo, outerFlameMat);
+      flareFlameGroup.add(outerFlame);
+
+      // Middle bright amber-orange turbulent flame cone
+      const midFlameGeo = new THREE.ConeGeometry(2.3, 11.5, 18);
+      midFlameGeo.translate(0, 5.75, 0);
+      const midFlameMat = new THREE.MeshBasicMaterial({{
+        color: 0xf97316,
+        transparent: true,
+        opacity: 0.85
+      }});
+      const midFlame = new THREE.Mesh(midFlameGeo, midFlameMat);
+      flareFlameGroup.add(midFlame);
+
+      // Inner white-yellow incandescent flame core
+      const coreFlameGeo = new THREE.ConeGeometry(1.25, 6.8, 16);
+      coreFlameGeo.translate(0, 3.4, 0);
+      const coreFlameMat = new THREE.MeshBasicMaterial({{ color: 0xfef08a }});
+      const coreFlame = new THREE.Mesh(coreFlameGeo, coreFlameMat);
+      flareFlameGroup.add(coreFlame);
+
+      // Warm flare illumination light source
+      flareLight = new THREE.PointLight(0xff7b00, isNight ? 2.6 : 1.3, 280);
+      flareLight.position.set(0, 8.0, 0);
+      flareFlameGroup.add(flareLight);
+
+      flareStackGroup.add(flareFlameGroup);
+      terminalGroup.add(flareStackGroup);
     }})();
 
     // Integrity self-check: supply and return centerlines must not interpenetrate.
@@ -2002,11 +2269,13 @@ def generate_terminal_3d_html(
     }}
     omegaCenters.forEach(cx => createTRVSkid(cx, MAIN_Z + LOOP_EXT + 2));
 
-    // 7. Animated Flow Particles
+    // 7. Animated Flow Particles (Main LNG, Recirculation, BOG Vapor & Flare Gas)
     const PARTICLE_COUNT = 80;
     const particleGeo = new THREE.SphereGeometry(0.4, 8, 8);
     const particleMatMain = new THREE.MeshBasicMaterial({{ color: 0xffffff }});
     const particleMatRecirc = new THREE.MeshBasicMaterial({{ color: 0x7ee787 }});
+    const particleMatBog = new THREE.MeshBasicMaterial({{ color: 0x38bdf8 }});
+    const particleMatFlare = new THREE.MeshBasicMaterial({{ color: 0xfb923c }});
 
     const mainParticles = [];
     for (let i = 0; i < PARTICLE_COUNT; i++) {{
@@ -2024,13 +2293,30 @@ def generate_terminal_3d_html(
       scene.add(p);
     }}
 
+    const bogParticles = [];
+    for (let i = 0; i < 28; i++) {{
+      const p = new THREE.Mesh(particleGeo, particleMatBog);
+      p.userData.t = i / 28;
+      bogParticles.push(p);
+      scene.add(p);
+    }}
+
+    const flareParticles = [];
+    for (let i = 0; i < 32; i++) {{
+      const p = new THREE.Mesh(particleGeo, particleMatFlare);
+      p.userData.t = i / 32;
+      flareParticles.push(p);
+      scene.add(p);
+    }}
+
     // Camera preset positions
     const views = {{
       overview: {{ cam: new THREE.Vector3(SCENE_CX, OVERVIEW_DIST * 0.35, OVERVIEW_DIST * 0.75), tgt: new THREE.Vector3(SCENE_CX, 10, 0) }},
       lup: {{ cam: new THREE.Vector3(-150, 40, 70), tgt: new THREE.Vector3(-120, 15, 0) }},
       omega: {{ cam: new THREE.Vector3(ROUTE_END * 0.5, 160, 140), tgt: new THREE.Vector3(ROUTE_END * 0.5, 12, 11) }},
       tank: {{ cam: new THREE.Vector3(TANK_X - 180, 140, 310), tgt: new THREE.Vector3(TANK_X + 20, 32, 0) }},
-      roof: {{ cam: new THREE.Vector3(TANK_X - 65, 92, 140), tgt: new THREE.Vector3(TANK_X, 58, 65) }}
+      roof: {{ cam: new THREE.Vector3(TANK_X - 65, 92, 140), tgt: new THREE.Vector3(TANK_X, 58, 65) }},
+      flare: {{ cam: new THREE.Vector3(FLARE_X - 115, 95, FLARE_Z + 145), tgt: new THREE.Vector3(FLARE_X - 10, 52, FLARE_Z + 10) }}
     }};
 
     let targetCamPos = camera.position.clone();
@@ -2084,6 +2370,34 @@ def generate_terminal_3d_html(
         const pos = recircCurve.getPoint(p.userData.t);
         p.position.copy(pos);
       }});
+
+      // Update BOG vapor particles flowing to BOG Compressor & Recondenser Station
+      if (bogParticleCurve) {{
+        bogParticles.forEach(p => {{
+          p.userData.t += delta * 0.14;
+          if (p.userData.t > 1.0) p.userData.t = 0.0;
+          p.position.copy(bogParticleCurve.getPoint(p.userData.t));
+        }});
+      }}
+
+      // Update Flare gas particles flowing through KO Drum V-401 and up the 84m Flare Stack F-401
+      if (flareParticleCurve) {{
+        flareParticles.forEach(p => {{
+          p.userData.t += delta * 0.16;
+          if (p.userData.t > 1.0) p.userData.t = 0.0;
+          p.position.copy(flareParticleCurve.getPoint(p.userData.t));
+        }});
+      }}
+
+      // Animate 3D Flare Stack Flame & Flickering Illumination
+      const flickerY = 1.0 + 0.14 * Math.sin(time * 13.0) + 0.08 * Math.cos(time * 23.0);
+      const flickerXZ = 1.0 + 0.08 * Math.cos(time * 17.0);
+      flareFlameGroup.scale.set(flickerXZ, flickerY, flickerXZ);
+      flareFlameGroup.rotation.z = 0.07 * Math.sin(time * 4.5);
+      flareFlameGroup.rotation.x = 0.05 * Math.cos(time * 3.7);
+      if (flareLight) {{
+        flareLight.intensity = (isNight ? 2.6 : 1.3) + 0.45 * Math.sin(time * 19.0);
+      }}
 
       // Smooth camera interpolation
       if (isTransitioning) {{

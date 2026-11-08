@@ -204,7 +204,8 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       <div>
         <span class="legend-badge"><div class="legend-line" style="background:#1f6feb;"></div>LNG Tahliye Hattı (Ana Hat)</span>
         <span class="legend-badge"><div class="legend-line" style="background:#39d353;"></div>Sirkülasyon & Soğutma Hattı</span>
-        <span class="legend-badge"><div class="legend-line" style="background:#d29922; stroke-dasharray: 3,2;"></div>BOG Buhar Dönüş Hattı</span>
+        <span class="legend-badge"><div class="legend-line" style="background:#38bdf8;"></div>BOG Buhar Hattı</span>
+        <span class="legend-badge"><div class="legend-line" style="background:#f97316;"></div>Flare (Meşale) Hattı & Baca (F-401)</span>
         <span class="legend-badge" style="color:#d29922; font-weight:700;">Hat: {route_length:.0f} m | Ω: {omega_count}</span>
       </div>
     </div>
@@ -315,15 +316,55 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
         L 190 280
       " fill="none" stroke="#39d353" stroke-width="3.5" stroke-linecap="round" stroke-linejoin="round" marker-end="url(#arrowGreen)" />
 
-      <!-- 3. BOG VAPOR RETURN LINE (TANK TOP -> SHIP) -->
+      <!-- 3. BOG VAPOR RETURN & COLLECTION LINE (TANK TOP <-> SHIP & BOG COMPRESSOR K-301) -->
       <path d="
-        M 1020 180
-        L 1020 120
-        L 170 120
+        M 1000 160
+        L 1000 115
+        L 170 115
         L 170 230
         L 125 230
-      " fill="none" stroke="#d29922" stroke-width="2" stroke-dasharray="5,4" />
-      <text x="500" y="112" fill="#d29922" font-size="9" font-weight="600">BOG Buhar Dönüş Hattı (Vapor Return Line)</text>
+      " fill="none" stroke="#38bdf8" stroke-width="2.2" stroke-dasharray="5,4" />
+      <path d="
+        M 1000 115
+        L 1000 72
+        L 915 72
+      " fill="none" stroke="#38bdf8" stroke-width="2.5" />
+      <text x="480" y="108" fill="#38bdf8" font-size="9" font-weight="600">BOG Buhar Hattı (Vapor Return &amp; BOG Collector Header)</text>
+
+      <!-- 4. BOG COMPRESSOR (K-301) & FLARE KO DRUM (V-401) & FLARE LINE -> FLARE STACK (F-401) -->
+      <g class="node-group" onclick="showInfo('BOG Kompresör &amp; Recondenser (K-301 / V-301)', 'Tanklarda ve boru devresinde oluşan kaynama gazını (BOG) toplayıp sıkıştıran ve yeniden sıvılaştırıcıya (recondenser) veya yüksek basınçta şebekeye/flare hattına ileten ünite.', '-145.0 °C', '1.08 -> 8.5 bar', 'K-301A/B + V-301')">
+        <rect x="855" y="54" width="60" height="34" fill="#1c2128" stroke="#38bdf8" stroke-width="1.8" rx="4" />
+        <text x="862" y="70" fill="#38bdf8" font-size="9" font-weight="700">BOG KOMP.</text>
+        <text x="865" y="82" fill="#8b949e" font-size="8">K-301 / V-301</text>
+      </g>
+
+      <!-- Flare Header Line (Tank PRV & BOG Excess -> KO Drum V-401 -> Flare Stack F-401) -->
+      <path d="
+        M 1045 160
+        L 1045 72
+        L 1072 72
+      " fill="none" stroke="#f97316" stroke-width="2.6" />
+      <path d="
+        M 915 62
+        L 1072 62
+      " fill="none" stroke="#f97316" stroke-width="2.2" stroke-dasharray="4,2" />
+      <text x="935" y="55" fill="#f97316" font-size="8.5" font-weight="700">Flare Tahliye Hattı</text>
+
+      <!-- Flare Stack F-401 & KO Drum V-401 -->
+      <g class="node-group" onclick="showInfo('Flare Hattı, KO Drum (V-401) &amp; Flare Bacası (F-401)', 'Acil durum aşırı basınç tahliyesi (PRV) ve kapasite fazlası BOG gazını sıvı ayırıcı tamburdan (V-401 Knock-Out Drum) geçirerek 84 m yüksekliğindeki kule destekli Flare bacasında (F-401) güvenli şekilde yakan sistem.', '-150 .. +850 °C', '1.05 bar (abs)', 'Baca Yüksekliği: 84 m | F-401')">
+        <!-- KO Drum V-401 -->
+        <rect x="1068" y="56" width="26" height="22" fill="#21262d" stroke="#f97316" stroke-width="1.6" rx="6" />
+        <text x="1070" y="70" fill="#f97316" font-size="7.5" font-weight="700">V-401</text>
+        <!-- Derrick Flare Stack Riser F-401 -->
+        <line x1="1116" y1="145" x2="1116" y2="38" stroke="#cbd5e1" stroke-width="4" />
+        <line x1="1108" y1="145" x2="1113" y2="42" stroke="#64748b" stroke-width="1.2" />
+        <line x1="1124" y1="145" x2="1119" y2="42" stroke="#64748b" stroke-width="1.2" />
+        <line x1="1094" y1="67" x2="1116" y2="67" stroke="#f97316" stroke-width="2.6" />
+        <!-- Flare Flame -->
+        <path d="M 1116 36 C 1106 24, 1111 12, 1116 4 C 1121 12, 1126 24, 1116 36 Z" fill="#f97316" />
+        <path d="M 1116 34 C 1111 26, 1113 17, 1116 11 C 1119 17, 1121 26, 1116 34 Z" fill="#fef08a" />
+        <text x="1092" y="157" fill="#f97316" font-size="9" font-weight="700">FLARE (F-401)</text>
+      </g>
 
       <!-- Live telemetry labels on pipe -->
       <rect x="220" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#58a6ff" />
