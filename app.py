@@ -698,7 +698,7 @@ def _m_show(kg_s, unit):
 
 
 # --- EXECUTE SIMULATION ---
-@st.cache_data(show_spinner=False)
+@st.cache_resource(show_spinner=False, max_entries=32)
 def run_simulation(
     length, diam, thick, mat_k, rough, incline,
     is_pure, comp_tuple,
