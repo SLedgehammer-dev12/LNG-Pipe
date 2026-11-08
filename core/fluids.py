@@ -97,6 +97,9 @@ class FluidManager:
         self._backend_string = self._build_backend_string()
         self._cache: Dict[tuple, FluidProperties] = {}
         self._psat_cache: Dict[float, float] = {}
+        self._psat_t_cache: Dict[float, float] = {}  # Psat by T
+        self._h_fg_cache: Dict[float, float] = {}    # Latent heat by P
+        self._t_bubble_dew_cache: Dict[float, tuple[float, float]] = {}  # Bubble/dew T by P
 
     def _build_backend_string(self) -> str:
         total = sum(self.composition.values())
@@ -153,7 +156,7 @@ class FluidManager:
         """Calculate saturation vapor pressure Psat(T) in Pa."""
         # Clamp temperature to valid range
         T_clamped = max(91.0, min(T, 190.0))
-        cache_key = round(T_clamped, 2)
+        cache_key = round(T_clamped, 1)
         if cache_key in self._psat_cache:
             return self._psat_cache[cache_key]
         try:
@@ -237,7 +240,9 @@ class FluidManager:
         Evaluate real fluid properties at temperature T (K) and pressure P (Pa).
         Uses quantized caching for fast finite-volume integration.
         """
-        # Cache key rounded to 0.1 K and 100 Pa for mixture performance
+        # Cache key rounded to 0.1 K and 100 Pa for mixture performance.
+        # Cryogenic LNG temperature changes slowly along pipe (<0.5 K/cell typical),
+        # so coarser K key increases cache hits without accuracy loss.
         cache_key = (round(T, 1), round(P, -2))
         if cache_key in self._cache:
             return self._cache[cache_key]
@@ -305,11 +310,15 @@ class FluidManager:
     def get_latent_heat(self, P: float) -> float:
         """Calculate latent heat of vaporization h_fg (J/kg) at saturation pressure P (Pa)."""
         P_clamped = max(50000.0, min(P, 4.2e6))
+        cache_key = round(P_clamped, -1)
+        if cache_key in self._h_fg_cache:
+            return self._h_fg_cache[cache_key]
         try:
             h_liq = float(CP.PropsSI("H", "P", P_clamped, "Q", 0, self._backend_string))
             h_vap = float(CP.PropsSI("H", "P", P_clamped, "Q", 1, self._backend_string))
             diff = h_vap - h_liq
             if diff > 100000.0:
+                self._h_fg_cache[cache_key] = float(diff)
                 return float(diff)
         except Exception:
             pass
@@ -318,16 +327,22 @@ class FluidManager:
         Tc = 190.56
         T_sat = 111.66 * ((P_clamped / 101325.0) ** 0.11)
         tau = max(1e-4, 1.0 - (T_sat / Tc))
-        return float(510500.0 * ((tau / (1.0 - 111.66 / Tc)) ** 0.38))
+        result = float(510500.0 * ((tau / (1.0 - 111.66 / Tc)) ** 0.38))
+        self._h_fg_cache[cache_key] = result
+        return result
 
     def get_bubble_dew_temperature(self, P: float) -> tuple[float, float]:
-        """Returns (T_bubble, T_dew) in K for fluid at pressure P (Pa)."""
+        """Returns (T_bubble, T_dew) in K for pressure P (Pa)."""
         P_clamped = max(50000.0, min(P, 4.2e6))
+        cache_key = round(P_clamped, -1)
+        if cache_key in self._t_bubble_dew_cache:
+            return self._t_bubble_dew_cache[cache_key]
         try:
             t_bubble = float(CP.PropsSI("T", "P", P_clamped, "Q", 0, self._backend_string))
             t_dew = float(CP.PropsSI("T", "P", P_clamped, "Q", 1, self._backend_string))
             if math.isnan(t_bubble) or math.isnan(t_dew):
                 raise ValueError("CoolProp returned NaN")
+            self._t_bubble_dew_cache[cache_key] = (float(t_bubble), float(t_dew))
             return float(t_bubble), float(t_dew)
         except Exception:
             pass
@@ -338,5 +353,7 @@ class FluidManager:
             t_sat = 111.66 * ((P_clamped / 101325.0) ** 0.11)
 
         glide = 1.8 if self.fluid_type != "pure_methane" else 0.0
-        return float(t_sat), float(t_sat + glide)
+        result = float(t_sat), float(t_sat + glide)
+        self._t_bubble_dew_cache[cache_key] = result
+        return result
 
