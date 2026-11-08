@@ -436,17 +436,29 @@ def generate_terminal_3d_html(
     controls.target.set(SCENE_CX, 10, 0);
     controls.update();
 
-    // Sea Surface — calm small waves, complete surface coverage, sea blue
-    const waterGeo = new THREE.PlaneGeometry(5000, 2000, 64, 64);
+    // Natural irregular coastline function: x_shore(z) in world coordinates
+    function getShorelineWorldX(z) {{
+      // Flatter near the jetty trestle abutment (|z| < 30), naturally jagged bays/headlands elsewhere
+      const coastalMask = 0.35 + 0.65 * Math.min(1.0, Math.pow(Math.abs(z) / 55.0, 1.4));
+      const undulation = (
+        22.0 * Math.sin(z * 0.0075 + 0.4) +
+        14.0 * Math.cos(z * 0.0170 - 0.8) +
+        8.5  * Math.sin(z * 0.0390 + 1.5) +
+        4.2  * Math.cos(z * 0.0780 - 2.1)
+      ) * coastalMask;
+      return SEAWALL_X + undulation;
+    }}
+
+    // Sea Surface — calm small waves, irregular shoreline foam & turquoise shallows
+    const waterGeo = new THREE.PlaneGeometry(5000, 2000, 128, 128);
     const waterCenterX = ROUTE_END * 0.5;
-    const shoreLocalX = SEAWALL_X - waterCenterX;
-    const deepColor = isNight ? new THREE.Color(0x050a14) : new THREE.Color(0x16425b);
-    const shoreColor = isNight ? new THREE.Color(0x1a2b3c) : new THREE.Color(0x3d8ca6);
-    const foamColor = isNight ? new THREE.Color(0x4a5a6a) : new THREE.Color(0xa8d8ea);
+    const deepColor = isNight ? new THREE.Color(0x050a14) : new THREE.Color(0x133c55);
+    const shoreColor = isNight ? new THREE.Color(0x1a2b3c) : new THREE.Color(0x3895ab);
+    const foamColor = isNight ? new THREE.Color(0x526578) : new THREE.Color(0xdaf2fa);
     const waterMat = new THREE.ShaderMaterial({{
       uniforms: {{
         uTime: {{ value: 0.0 }},
-        uShoreX: {{ value: shoreLocalX }},
+        uSeawallX: {{ value: SEAWALL_X }},
         uDeepColor: {{ value: deepColor }},
         uShoreColor: {{ value: shoreColor }},
         uFoamColor: {{ value: foamColor }},
@@ -454,19 +466,28 @@ def generate_terminal_3d_html(
       }},
       vertexShader: `
         uniform float uTime;
-        uniform float uShoreX;
+        uniform float uSeawallX;
         uniform float uIsNight;
         varying float vShoreDist;
         varying vec3 vWorldPos;
+        float shoreProfileX(float z) {{
+          float mask = 0.35 + 0.65 * min(1.0, pow(abs(z) / 55.0, 1.4));
+          float und = (
+            22.0 * sin(z * 0.0075 + 0.4) +
+            14.0 * cos(z * 0.0170 - 0.8) +
+            8.5  * sin(z * 0.0390 + 1.5) +
+            4.2  * cos(z * 0.0780 - 2.1)
+          ) * mask;
+          return uSeawallX + und;
+        }}
         void main(){{
           vec3 pos = position;
-          // Small calm waves (reduced amplitude)
           float wave = 0.06 * sin(pos.x * 0.022 + uTime * 0.9)
                      + 0.04 * cos(pos.y * 0.030 - uTime * 0.6);
-          pos.z += wave; // local z -> world up after Rx(-90)
+          pos.z += wave;
           vec4 worldPos = modelMatrix * vec4(pos, 1.0);
           vWorldPos = worldPos.xyz;
-          vShoreDist = uShoreX - position.x;
+          vShoreDist = shoreProfileX(worldPos.z) - worldPos.x;
           gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
         }}
       `,
@@ -479,11 +500,11 @@ def generate_terminal_3d_html(
         varying float vShoreDist;
         varying vec3 vWorldPos;
         void main(){{
-          float shore = smoothstep(0.0, 80.0, vShoreDist);
+          float shore = smoothstep(0.0, 95.0, max(0.0, vShoreDist));
           vec3 color = mix(uShoreColor, uDeepColor, shore);
-          float waveFoam = smoothstep(0.0, 12.0, vShoreDist)
-                         * (0.30 + 0.30 * sin(uTime * 2.2 + vWorldPos.x * 0.10));
-          color = mix(color, uFoamColor, waveFoam);
+          float surfBand = smoothstep(18.0, 0.0, abs(vShoreDist - 2.5));
+          float waveFoam = surfBand * (0.38 + 0.35 * sin(uTime * 2.1 + vWorldPos.z * 0.08 - vShoreDist * 0.45));
+          color = mix(color, uFoamColor, clamp(waveFoam, 0.0, 0.85));
           if (uIsNight > 0.5) {{
             color *= 0.55;
           }}
@@ -494,30 +515,141 @@ def generate_terminal_3d_html(
     }});
     const waterMesh = new THREE.Mesh(waterGeo, waterMat);
     waterMesh.rotation.x = -Math.PI / 2;
-    waterMesh.position.set(ROUTE_END * 0.5, 0, 0);
+    waterMesh.position.set(waterCenterX, 0, 0);
     waterMesh.receiveShadow = true;
     scene.add(waterMesh);
 
-    // Onshore Ground Terrain
-    const landGeo = new THREE.BoxGeometry(450, 30, 800);
-    const landMat = new THREE.MeshStandardMaterial({{
-      color: 0x1f242d,
-      roughness: 0.9,
-      metalness: 0.1
-    }});
-    const landMesh = new THREE.Mesh(landGeo, landMat);
-    landMesh.position.set(LAND_X, -10, 0);
-    landMesh.receiveShadow = true;
-    scene.add(landMesh);
+    // Natural Irregular Onshore Earth Terrain & Coastal Beach/Riprap Slope
+    (function buildNaturalCoastAndTerrain() {{
+      const nz = 180;
+      const nx = 48;
+      const zMin = -900.0, zMax = 900.0;
+      const landBackX = LAND_X + 420.0;
+      const positions = [];
+      const colors = [];
+      const indices = [];
 
-    // Shoreline concrete seawall
-    const seawallGeo = new THREE.BoxGeometry(10, 12, 800);
-    const seawallMat = new THREE.MeshStandardMaterial({{ color: 0x484f58, roughness: 0.7 }});
-    const seawall = new THREE.Mesh(seawallGeo, seawallMat);
-    seawall.position.set(SEAWALL_X, 4, 0);
-    seawall.castShadow = true;
-    seawall.receiveShadow = true;
-    scene.add(seawall);
+      // Earth-toned palette (toprak, kum, çakıl ve kıyı florası tonları)
+      const colWetSand   = isNight ? new THREE.Color(0x3b3124) : new THREE.Color(0x9e825c);
+      const colDryBeach  = isNight ? new THREE.Color(0x4a3d2d) : new THREE.Color(0xc4a77d);
+      const colSoilMain  = isNight ? new THREE.Color(0x382b1e) : new THREE.Color(0x8b6843);
+      const colTerracotta= isNight ? new THREE.Color(0x3f2a1d) : new THREE.Color(0x9c6b43);
+      const colHillScrub = isNight ? new THREE.Color(0x2a3121) : new THREE.Color(0x6e6a44);
+
+      for (let iz = 0; iz <= nz; iz++) {{
+        const v = iz / nz;
+        const z = zMin + v * (zMax - zMin);
+        const xShore = getShorelineWorldX(z);
+        for (let ix = 0; ix <= nx; ix++) {{
+          const u = ix / nx;
+          // Non-linear spacing so shoreline slope has fine resolution
+          const uWarp = Math.pow(u, 1.25);
+          const x = (xShore - 14.0) + uWarp * (landBackX - (xShore - 14.0));
+
+          // Elevation profile: underwater toe (-3.5m) -> beach slope -> coastal berm (+5.0m) -> inland rolling hills
+          let y = 5.0;
+          if (u < 0.06) {{
+            y = -3.5 + (u / 0.06) * 4.2; // submerged shore toe to water's edge (+0.7m)
+          }} else if (u < 0.16) {{
+            const s = (u - 0.06) / 0.10;
+            y = 0.7 + (3 * s * s - 2 * s * s * s) * 4.3; // natural coastal bank up to +5.0m
+          }} else {{
+            // Keep terminal pad around LNG tank & road level (|z| < 135), natural rolling hills outside
+            const padFlatten = Math.min(1.0, Math.max(0.0, (Math.abs(z) - 115.0) / 90.0));
+            const hill = (
+              7.5 * Math.sin(x * 0.012 + z * 0.009) +
+              4.5 * Math.cos(x * 0.025 - z * 0.016) +
+              2.2 * Math.sin(z * 0.045)
+            ) * padFlatten * Math.min(1.0, (u - 0.16) * 2.2);
+            y = 5.0 + Math.max(-0.8, hill);
+          }}
+          positions.push(x, y, z);
+
+          // Vertex color blending based on shore distance and elevation
+          const c = new THREE.Color();
+          if (y < 1.1) {{
+            c.copy(colWetSand);
+          }} else if (u < 0.14) {{
+            c.copy(colDryBeach).lerp(colSoilMain, (u - 0.06) / 0.08);
+          }} else {{
+            const noiseMix = 0.5 + 0.5 * Math.sin(x * 0.018 + z * 0.021);
+            c.copy(colSoilMain).lerp(colTerracotta, noiseMix * 0.65);
+            if (y > 8.5) {{
+              c.lerp(colHillScrub, Math.min(0.65, (y - 8.5) / 10.0));
+            }}
+          }}
+          colors.push(c.r, c.g, c.b);
+        }}
+      }}
+
+      const rowStride = nx + 1;
+      for (let iz = 0; iz < nz; iz++) {{
+        for (let ix = 0; ix < nx; ix++) {{
+          const a = iz * rowStride + ix;
+          const b = a + 1;
+          const c = (iz + 1) * rowStride + ix;
+          const d = c + 1;
+          indices.push(a, c, b);
+          indices.push(b, c, d);
+        }}
+      }}
+
+      const terrainGeo = new THREE.BufferGeometry();
+      terrainGeo.setIndex(indices);
+      terrainGeo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+      terrainGeo.setAttribute('color', new THREE.Float32BufferAttribute(colors, 3));
+      terrainGeo.computeVertexNormals();
+
+      const terrainMat = new THREE.MeshStandardMaterial({{
+        vertexColors: true,
+        roughness: 0.92,
+        metalness: 0.04
+      }});
+      const terrainMesh = new THREE.Mesh(terrainGeo, terrainMat);
+      terrainMesh.receiveShadow = true;
+      terrainMesh.castShadow = true;
+      scene.add(terrainMesh);
+
+      // Coastal riprap boulders & rocky outcrops along the irregular shoreline
+      const rockMat = new THREE.MeshStandardMaterial({{
+        color: isNight ? 0x3b352e : 0x6e5d4b,
+        roughness: 0.9,
+        metalness: 0.08
+      }});
+      const rockGeo = new THREE.DodecahedronGeometry(1.0, 1);
+      for (let z = -750; z <= 750; z += 11) {{
+        if (z > -28 && z < 28) continue; // leave opening for pipe trestle abutment
+        const xs = getShorelineWorldX(z);
+        const rScale = 1.6 + 1.4 * Math.abs(Math.sin(z * 0.13));
+        const rock = new THREE.Mesh(rockGeo, rockMat);
+        rock.scale.set(rScale * 1.3, rScale * 0.75, rScale * 1.1);
+        rock.position.set(xs - 1.5 + 2.0 * Math.cos(z * 0.29), 0.9, z);
+        rock.rotation.set(z * 0.1, z * 0.23, 0);
+        rock.castShadow = true;
+        rock.receiveShadow = true;
+        scene.add(rock);
+      }}
+
+      // Compact concrete trestle abutment only where the pipe bridge & road meet the shore
+      const abutmentGeo = new THREE.BoxGeometry(12, 8.5, 52);
+      const abutmentMat = new THREE.MeshStandardMaterial({{ color: 0x6e7681, roughness: 0.75 }});
+      const abutment = new THREE.Mesh(abutmentGeo, abutmentMat);
+      abutment.position.set(getShorelineWorldX(0) + 2.0, 2.8, 0);
+      abutment.castShadow = true;
+      abutment.receiveShadow = true;
+      scene.add(abutment);
+
+      // Compact graded gravel pad under the LNG storage tank & pump station
+      const padGeo = new THREE.CylinderGeometry(84, 88, 1.0, 48);
+      const padMat = new THREE.MeshStandardMaterial({{
+        color: isNight ? 0x3a352f : 0x9a8b78,
+        roughness: 0.9
+      }});
+      const tankPad = new THREE.Mesh(padGeo, padMat);
+      tankPad.position.set(TANK_X, 4.7, 0);
+      tankPad.receiveShadow = true;
+      scene.add(tankPad);
+    }})();
 
     // Group for all terminal structures
     const terminalGroup = new THREE.Group();
@@ -658,76 +790,228 @@ def generate_terminal_3d_html(
       return group;
     }}
 
-    // 1. LUP Dolphin (Loading / Unloading Platform)
-    const lupPlatform = createDolphin(-120, 0, 36, 48, 12, 6, "LUP Dolphin");
+    // 1. LUP Dolphin (Loading / Unloading Platform) — centered at x = -120, set back behind berthing line
+    const lupPlatform = createDolphin(-120, 0, 30, 44, 12, 6, "LUP Dolphin");
 
-    // Berthing dolphin (kevale/dofen) between LUP and vessel for mooring & manifolds
-    // Positioned on the loading side, between LUP deck edge (-132) and ship (-150)
-    const berthDolphin = createDolphin(-138, 0, 24, 34, 10, 4, "Berthing Dolfeni");
+    // Helper: Properly Scaled Quick Release Hook (QRH - Hızlı Bırakma Kancası) + Electric Capstan Winch
+    const qrhBaseMat = new THREE.MeshStandardMaterial({{ color: 0xe3a008, roughness: 0.35, metalness: 0.6 }});
+    const qrhHookMat = new THREE.MeshStandardMaterial({{ color: 0xd9383a, roughness: 0.3, metalness: 0.75 }});
+    const capstanMat = new THREE.MeshStandardMaterial({{ color: 0x2f3640, roughness: 0.4, metalness: 0.85 }});
 
-    // Mooring dolphins alongside the ship (port side, away from LUP) with bollards for mooring lines
-    // Based on reference photos: concrete mooring platforms with bollards & fenders
-    const mooringDolphinMat = new THREE.MeshStandardMaterial({{ color: 0x8c959f, roughness: 0.85 }});
+    function createQuickReleaseHookUnit(deckY, hookCount = 3) {{
+      const qrhGroup = new THREE.Group();
+      // Heavy steel base plate bolted to concrete dolphin deck
+      const basePlate = new THREE.Mesh(new THREE.BoxGeometry(3.6, 0.45, 3.8), steelMat);
+      basePlate.position.set(0, deckY + 0.22, 0);
+      basePlate.castShadow = true;
+      qrhGroup.add(basePlate);
+
+      // Yellow QRH structural turret pedestal
+      const pedestal = new THREE.Mesh(new THREE.BoxGeometry(2.4, 1.8, 3.0), qrhBaseMat);
+      pedestal.position.set(0.2, deckY + 1.3, 0);
+      pedestal.castShadow = true;
+      qrhGroup.add(pedestal);
+
+      // Articulated Quick Release Hooks facing the ship (-x direction)
+      for (let h = 0; h < hookCount; h++) {{
+        const hz = (h - (hookCount - 1) / 2.0) * 0.9;
+        // Swivel clevis arm
+        const clevis = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.55, 0.45), qrhBaseMat);
+        clevis.position.set(-0.9, deckY + 1.55, hz);
+        qrhGroup.add(clevis);
+        // Counterweighted release hook head (high-visibility red/orange)
+        const hookCurved = new THREE.Mesh(new THREE.TorusGeometry(0.45, 0.16, 10, 18, Math.PI * 1.35), qrhHookMat);
+        hookCurved.rotation.x = Math.PI / 2;
+        hookCurved.position.set(-1.65, deckY + 1.55, hz);
+        hookCurved.castShadow = true;
+        qrhGroup.add(hookCurved);
+        // Manual trip / release lever bar
+        const lever = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 1.4, 8), qrhHookMat);
+        lever.position.set(-0.4, deckY + 2.35, hz);
+        lever.rotation.z = -0.35;
+        qrhGroup.add(lever);
+      }}
+
+      // Integrated electric vertical capstan winch (messenger line drum) on rear of QRH unit
+      const capstanBase = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.75, 0.9, 16), qrhBaseMat);
+      capstanBase.position.set(1.1, deckY + 0.85, 1.15);
+      qrhGroup.add(capstanBase);
+      const capstanDrum = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.38, 1.2, 16), capstanMat);
+      capstanDrum.position.set(1.1, deckY + 1.85, 1.15);
+      capstanDrum.castShadow = true;
+      qrhGroup.add(capstanDrum);
+
+      return qrhGroup;
+    }}
+
+    // Helper: Elevated Steel Catwalk Bridge (Kedi Yolu) between dolphins on jetty side
+    const catwalkBridgeMat = new THREE.MeshStandardMaterial({{ color: 0x4b5563, roughness: 0.6, metalness: 0.5 }});
+    function createCatwalkBridge(x1, z1, x2, z2, yLevel = 11.2) {{
+      const dx = x2 - x1, dz = z2 - z1;
+      const len = Math.hypot(dx, dz);
+      const angle = Math.atan2(dx, dz);
+      const bridgeGrp = new THREE.Group();
+      const walkway = new THREE.Mesh(new THREE.BoxGeometry(2.2, 0.3, len), catwalkBridgeMat);
+      walkway.position.set(0, yLevel, 0);
+      walkway.castShadow = true;
+      bridgeGrp.add(walkway);
+      [-1.0, 1.0].forEach(rx => {{
+        const topRail = new THREE.Mesh(new THREE.BoxGeometry(0.1, 1.15, len), railingMat);
+        topRail.position.set(rx, yLevel + 0.65, 0);
+        bridgeGrp.add(topRail);
+      }});
+      bridgeGrp.position.set((x1 + x2) / 2.0, 0, (z1 + z2) / 2.0);
+      bridgeGrp.rotation.y = angle;
+      terminalGroup.add(bridgeGrp);
+    }}
+
+    // Berthing / Breasting Dolphins (BD-1..BD-4) on the JETTY SIDE (İskele Tarafı) of the ship!
+    // Ship center is x = -172 (beam = 46m -> jetty-side hull is at x = -149).
+    // Breasting dolphins sit at x = -139 with cone fenders + frontal panels contacting the hull at x = -148.5.
+    const fenderRubberMat = new THREE.MeshStandardMaterial({{ color: 0x1c2127, roughness: 0.88 }});
+    const fenderPadMat = new THREE.MeshStandardMaterial({{ color: 0xe6edf3, roughness: 0.4, metalness: 0.2 }});
+    const breastingDolphinPositions = [
+      {{ x: -139, z: -64, name: "BD-1 Yanaşma Dolfeni (Baş İç)" }},
+      {{ x: -139, z: -32, name: "BD-2 Yanaşma Dolfeni (LUP Kuzey)" }},
+      {{ x: -139, z:  32, name: "BD-3 Yanaşma Dolfeni (LUP Güney)" }},
+      {{ x: -139, z:  64, name: "BD-4 Yanaşma Dolfeni (Kıç İç)" }}
+    ];
+    breastingDolphinPositions.forEach((bdPos) => {{
+      const bd = createDolphin(bdPos.x, bdPos.z, 14, 16, 10.5, 4, bdPos.name);
+      // Dual elastomeric cone fenders facing ship (-x)
+      [-3.5, 3.5].forEach(fz => {{
+        const coneFender = new THREE.Mesh(new THREE.CylinderGeometry(1.6, 2.2, 2.4, 16), fenderRubberMat);
+        coneFender.rotation.z = Math.PI / 2;
+        coneFender.position.set(-8.0, 9.8, fz);
+        bd.add(coneFender);
+      }});
+      // Frontal fender panel (UHMW-PE face pad) pressing against ship's jetty-side hull (x = -148.5)
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(0.9, 6.2, 10.5), fenderPadMat);
+      panel.position.set(-9.2, 9.8, 0);
+      panel.castShadow = true;
+      bd.add(panel);
+
+      // Dual Quick Release Hook (QRH) unit on each Breasting Dolphin for Spring Lines (Açmaz Halatları)
+      const qrhSpring = createQuickReleaseHookUnit(12.0, 2);
+      bd.add(qrhSpring);
+    }});
+
+    // Mooring Dolphins (MD-1..MD-6) on the JETTY SIDE (İskele Tarafı), set back behind the berthing line
+    // for optimal OCIMF MEG4 breast, head, and stern line angles!
     const mooringDolphinPositions = [
-      {{ x: -172, z: -105, name: "Mooring Dolfeni - Burun" }},
-      {{ x: -172, z: 0,    name: "Mooring Dolfeni - Orta" }},
-      {{ x: -172, z: 105,  name: "Mooring Dolfeni - Kıpır" }}
+      {{ x: -108, z: -182, name: "MD-1 Bağlama Dolfeni (Baş Halatları)" }},
+      {{ x: -114, z: -142, name: "MD-2 Bağlama Dolfeni (Baş/Koltuk)" }},
+      {{ x: -118, z: -102, name: "MD-3 Bağlama Dolfeni (Baş Koltuk)" }},
+      {{ x: -118, z:  102, name: "MD-4 Bağlama Dolfeni (Kıç Koltuk)" }},
+      {{ x: -114, z:  142, name: "MD-5 Bağlama Dolfeni (Kıç/Koltuk)" }},
+      {{ x: -108, z:  182, name: "MD-6 Bağlama Dolfeni (Kıç Halatları)" }}
     ];
     mooringDolphinPositions.forEach((pos) => {{
-      const md = createDolphin(pos.x, pos.z, 16, 22, 9, 4, pos.name);
-      // Bollards on mooring dolphin for ship mooring lines
-      [-6, 6].forEach((bx) => {{
-        [-8, 0, 8].forEach((bz) => {{
-          const bollard = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 0.8, 1.8, 10), bollardMat);
-          bollard.position.set(bx, 10.5, bz);
-          md.add(bollard);
-        }});
-      }});
-      // Fenders (rubber bumpers) facing ship
-      const fender = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 3, 12), new THREE.MeshStandardMaterial({{ color: 0x2a1a1a, roughness: 0.9 }}));
-      fender.position.set(-2, 11, 0);
-      fender.rotation.z = Math.PI / 2;
-      md.add(fender);
-      terminalGroup.add(md);
+      const md = createDolphin(pos.x, pos.z, 15, 18, 10.5, 4, pos.name);
+      // Triple Quick Release Hook (QRH) assembly + Capstan on each Mooring Dolphin
+      const qrhUnit = createQuickReleaseHookUnit(12.0, 3);
+      md.add(qrhUnit);
     }});
 
-    // Mooring lines (ropes) from mooring dolphins to ship bollards
-    const ropeMat = new THREE.LineBasicMaterial({{ color: 0x5d4037 }});
-    mooringDolphinPositions.forEach((pos) => {{
-      const ropeGeo = new THREE.BufferGeometry().setFromPoints([
-        new THREE.Vector3(pos.x - 6, 10.5, pos.z - 8),
-        new THREE.Vector3(-174, 18, pos.z),
-        new THREE.Vector3(-174, 18, pos.z + 8)
-      ]);
-      const rope = new THREE.Line(ropeGeo, ropeMat);
-      terminalGroup.add(rope);
+    // Connect LUP, Breasting Dolphins (BD-1..4), and Mooring Dolphins (MD-1..6) via Jetty Catwalk Bridges
+    createCatwalkBridge(-120, -22, -139, -32, 12.2);
+    createCatwalkBridge(-139, -32, -139, -64, 12.2);
+    createCatwalkBridge(-139, -64, -118, -102, 12.2);
+    createCatwalkBridge(-118, -102, -114, -142, 12.2);
+    createCatwalkBridge(-114, -142, -108, -182, 12.2);
+
+    createCatwalkBridge(-120,  22, -139,  32, 12.2);
+    createCatwalkBridge(-139,  32, -139,  64, 12.2);
+    createCatwalkBridge(-139,  64, -118,  102, 12.2);
+    createCatwalkBridge(-118,  102, -114,  142, 12.2);
+    createCatwalkBridge(-114,  142, -108,  182, 12.2);
+
+    // 16 Properly Scaled Catenary Mooring Lines (Gemi Bağlama Halatları) from Jetty QRHs to Ship Fairleads
+    const hawserMat = new THREE.MeshStandardMaterial({{
+      color: 0xf0e6d2,
+      roughness: 0.55,
+      metalness: 0.1,
+      emissive: 0x2a2418,
+      emissiveIntensity: 0.25
+    }});
+    const chafeGuardMat = new THREE.MeshStandardMaterial({{ color: 0xf59e0b, roughness: 0.4 }});
+
+    function createMooringHawser(qrhWorldPos, shipChockPos, sag = 1.6) {{
+      const mid1 = new THREE.Vector3().lerpVectors(qrhWorldPos, shipChockPos, 0.33);
+      const mid2 = new THREE.Vector3().lerpVectors(qrhWorldPos, shipChockPos, 0.67);
+      mid1.y -= sag;
+      mid2.y -= sag * 0.85;
+      const curve = new THREE.CatmullRomCurve3([qrhWorldPos, mid1, mid2, shipChockPos]);
+      // Main braided HMPE / Dyneema mooring rope (properly scaled diameter ~0.52m in scene units for clear visibility)
+      const ropeMesh = new THREE.Mesh(new THREE.TubeGeometry(curve, 24, 0.26, 8, false), hawserMat);
+      ropeMesh.castShadow = true;
+      terminalGroup.add(ropeMesh);
+
+      // Protective yellow chafe-guard sleeve near ship fairlead chock
+      const chafeStart = curve.getPoint(0.84);
+      const chafeCurve = new THREE.LineCurve3(chafeStart, shipChockPos);
+      const chafeMesh = new THREE.Mesh(new THREE.TubeGeometry(chafeCurve, 6, 0.34, 8, false), chafeGuardMat);
+      terminalGroup.add(chafeMesh);
+    }}
+
+    // OCIMF MEG4 Symmetric 16-Line Mooring Pattern (all on Jetty / Starboard-to-Jetty Side x = -149):
+    const mooringLinePairs = [
+      // 3 Head Lines (MD-1 -> Ship Bow Forecastle Chocks)
+      [new THREE.Vector3(-109.6, 13.5, -182.9), new THREE.Vector3(-156.0, 18.2, -154.0), 2.2],
+      [new THREE.Vector3(-109.6, 13.5, -182.0), new THREE.Vector3(-153.0, 18.2, -148.0), 2.0],
+      [new THREE.Vector3(-109.6, 13.5, -181.1), new THREE.Vector3(-150.5, 18.2, -142.0), 1.9],
+      // 2 Forward Breast Lines from MD-2
+      [new THREE.Vector3(-115.6, 13.5, -142.9), new THREE.Vector3(-149.2, 17.8, -128.0), 1.7],
+      [new THREE.Vector3(-115.6, 13.5, -141.1), new THREE.Vector3(-149.2, 17.8, -118.0), 1.7],
+      // 2 Forward Breast Lines from MD-3
+      [new THREE.Vector3(-119.6, 13.5, -102.9), new THREE.Vector3(-149.2, 17.8, -98.0), 1.5],
+      [new THREE.Vector3(-119.6, 13.5, -101.1), new THREE.Vector3(-149.2, 17.8, -88.0), 1.5],
+      // 2 Forward Spring Lines (BD-1 & BD-2 -> Ship Mid-Forward Chocks)
+      [new THREE.Vector3(-140.6, 13.5, -64.4),  new THREE.Vector3(-149.2, 17.8, -38.0), 1.1],
+      [new THREE.Vector3(-140.6, 13.5, -32.4),  new THREE.Vector3(-149.2, 17.8, -56.0), 1.1],
+      // 2 Aft Spring Lines (BD-3 & BD-4 -> Ship Mid-Aft Chocks)
+      [new THREE.Vector3(-140.6, 13.5,  32.4),  new THREE.Vector3(-149.2, 17.8,  56.0), 1.1],
+      [new THREE.Vector3(-140.6, 13.5,  64.4),  new THREE.Vector3(-149.2, 17.8,  38.0), 1.1],
+      // 2 Aft Breast Lines from MD-4
+      [new THREE.Vector3(-119.6, 13.5,  101.1), new THREE.Vector3(-149.2, 17.8,  88.0), 1.5],
+      [new THREE.Vector3(-119.6, 13.5,  102.9), new THREE.Vector3(-149.2, 17.8,  98.0), 1.5],
+      // 2 Aft Breast Lines from MD-5
+      [new THREE.Vector3(-115.6, 13.5,  141.1), new THREE.Vector3(-149.2, 17.8,  118.0), 1.7],
+      [new THREE.Vector3(-115.6, 13.5,  142.9), new THREE.Vector3(-149.2, 17.8,  128.0), 1.7],
+      // 3 Stern Lines (MD-6 -> Ship Stern Poop Deck Chocks)
+      [new THREE.Vector3(-109.6, 13.5,  181.1), new THREE.Vector3(-150.5, 18.2,  142.0), 1.9],
+      [new THREE.Vector3(-109.6, 13.5,  182.0), new THREE.Vector3(-153.0, 18.2,  148.0), 2.0],
+      [new THREE.Vector3(-109.6, 13.5,  182.9), new THREE.Vector3(-156.0, 18.2,  154.0), 2.2]
+    ];
+    mooringLinePairs.forEach(([qrhPos, chockPos, sag]) => {{
+      createMooringHawser(qrhPos, chockPos, sag);
     }});
 
-    // Marine Loading Arms (MLAs): LUP dolphin outer edge -> vessel manifold
+    // Marine Loading Arms (MLAs): LUP dolphin outer edge (-133) -> vessel manifold (-149)
     for (let i = 0; i < 4; i++) {{
       const armGroup = new THREE.Group();
       const zOffset = -15 + i * 10;
 
       // Base pedestal on LUP deck outer edge (toward vessel)
       const ped = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 1.5, 5, 16), steelMat);
-      ped.position.set(-132, 14.5, zOffset);
+      ped.position.set(-133, 14.5, zOffset);
       armGroup.add(ped);
 
       // Inboard arm (rises from pedestal)
       const inArm = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 11, 12), yellowMat);
-      inArm.position.set(-132, 20, zOffset);
+      inArm.position.set(-133, 20, zOffset);
       inArm.rotation.z = 0.35;
       armGroup.add(inArm);
 
-      // Outboard arm reaching across to vessel manifold
-      const outArm = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 16, 12), yellowMat);
-      outArm.position.set(-139, 21, zOffset);
-      outArm.rotation.z = -0.5;
+      // Outboard arm reaching across to vessel manifold on jetty side
+      const outArm = new THREE.Mesh(new THREE.CylinderGeometry(0.4, 0.4, 17, 12), yellowMat);
+      outArm.position.set(-141, 21, zOffset);
+      outArm.rotation.z = -0.52;
       armGroup.add(outArm);
 
-      // Connecting nozzle at vessel manifold (ship side)
+      // Connecting nozzle at vessel manifold (ship jetty-facing side x = -149)
       const nozzle = new THREE.Mesh(new THREE.CylinderGeometry(0.45, 0.45, 5, 12), steelMat);
-      nozzle.position.set(-148, 13, zOffset);
+      nozzle.position.set(-149, 15, zOffset);
       nozzle.rotation.z = Math.PI / 2;
       armGroup.add(nozzle);
 
@@ -745,45 +1029,52 @@ def generate_terminal_3d_html(
     esdvStation.add(handwheel);
     terminalGroup.add(esdvStation);
 
-    // 2. LNG Carrier Vessel (Moss-type spherical cargo tanks, based on reference photos)
+    // 2. LNG Carrier Vessel — berthed alongside Breasting Dolphins (ship center x = -172, jetty side x = -149)
     const shipGroup = new THREE.Group();
-    shipGroup.position.set(-150, 0, 0);
-    shipGroup.rotation.y = 0; // bow facing -z (toward LUP/dolphins)
+    shipGroup.position.set(-172, 0, 0);
+    shipGroup.rotation.y = 0;
 
     // === HULL ===
-    // Red hull (matches reference photos: red hull below deck)
+    // Red hull (parallel midbody + tapered bow/stern)
     const hullRedMat = new THREE.MeshStandardMaterial({{ color: 0xb22222, roughness: 0.6 }});
-    const hullRed = new THREE.Mesh(new THREE.BoxGeometry(46, 11, 320), hullRedMat);
+    const hullRed = new THREE.Mesh(new THREE.BoxGeometry(46, 11, 276), hullRedMat);
     hullRed.position.set(0, 2, 0);
     hullRed.castShadow = true;
     hullRed.receiveShadow = true;
     shipGroup.add(hullRed);
 
-    // White upper hull / deck house sides
-    const hullWhite = new THREE.Mesh(new THREE.BoxGeometry(44, 7, 310), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.5 }}));
+    // Sculpted raked bow (-z) and tapered stern (+z)
+    const bowCone = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 23, 36, 4), hullRedMat);
+    bowCone.rotation.x = -Math.PI / 2;
+    bowCone.rotation.y = Math.PI / 4;
+    bowCone.scale.set(1.0, 1.0, 0.35);
+    bowCone.position.set(0, 3.5, -152);
+    bowCone.castShadow = true;
+    shipGroup.add(bowCone);
+
+    // White upper hull / trunk deck
+    const hullWhite = new THREE.Mesh(new THREE.BoxGeometry(44, 7, 296), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.5 }}));
     hullWhite.position.set(0, 13, 0);
     hullWhite.castShadow = true;
     hullWhite.receiveShadow = true;
     shipGroup.add(hullWhite);
 
     // Keel / bottom
-    const keel = new THREE.Mesh(new THREE.BoxGeometry(42, 4, 314), new THREE.MeshStandardMaterial({{ color: 0x2a1a1a, roughness: 0.8 }}));
+    const keel = new THREE.Mesh(new THREE.BoxGeometry(42, 4, 290), new THREE.MeshStandardMaterial({{ color: 0x2a1a1a, roughness: 0.8 }}));
     keel.position.set(0, -5, 0);
     keel.castShadow = true;
     shipGroup.add(keel);
 
     // === MOSS SPHERICAL CARGO TANKS ===
-    // Prominent spheres along centerline (cream / pale yellow like reference photos)
     const tankMat = new THREE.MeshStandardMaterial({{ color: 0xe8f0e0, roughness: 0.45, metalness: 0.15 }});
     const tankCapMat = new THREE.MeshStandardMaterial({{ color: 0x9fd3ad, roughness: 0.4, metalness: 0.3 }});
-    const tankZs = [-120, -60, 0, 60, 120];
+    const tankZs = [-110, -55, 0, 55, 105];
     tankZs.forEach((zPos) => {{
       const tank = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 24), tankMat);
       tank.position.set(0, 16, zPos);
       tank.castShadow = true;
       tank.receiveShadow = true;
       shipGroup.add(tank);
-      // Upper dome / cap hint
       const cap = new THREE.Mesh(new THREE.SphereGeometry(10, 32, 16, 0, Math.PI * 2, 0, Math.PI * 0.5), tankCapMat);
       cap.position.set(0, 16, zPos);
       cap.rotation.x = -Math.PI / 2;
@@ -792,44 +1083,44 @@ def generate_terminal_3d_html(
 
     // === BRIDGE / SUPERSTRUCTURE at stern (+z) ===
     const bridge = new THREE.Mesh(new THREE.BoxGeometry(30, 15, 26), new THREE.MeshStandardMaterial({{ color: 0xf0f6fc, roughness: 0.4 }}));
-    bridge.position.set(0, 24, 125);
+    bridge.position.set(0, 24, 128);
     bridge.castShadow = true;
     bridge.receiveShadow = true;
     shipGroup.add(bridge);
-    // Bridge windows (front face toward bow, -z side)
-    const winZ = 113;
-    [-12, 0, 12].forEach((wx) => {{
-      const win = new THREE.Mesh(new THREE.BoxGeometry(6, 7, 1), windowMat);
-      win.position.set(wx, 20, winZ);
+    const winZ = 114.8;
+    [-10, 0, 10].forEach((wx) => {{
+      const win = new THREE.Mesh(new THREE.BoxGeometry(6, 4.5, 0.8), windowMat);
+      win.position.set(wx, 26, winZ);
       shipGroup.add(win);
     }});
-    // Funnel near bridge
-    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.5, 7, 16), funnelMat);
-    funnel.position.set(0, 21, 110);
+    const funnel = new THREE.Mesh(new THREE.CylinderGeometry(2.5, 2.8, 8, 16), funnelMat);
+    funnel.position.set(0, 33, 134);
     funnel.castShadow = true;
     shipGroup.add(funnel);
 
     // === DECK RAILING ===
-    const railY = 17.5;
-    [23, -23].forEach((rx) => {{
-      const sideRail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.1, 260), railingMat);
+    const railY = 17.2;
+    [22.5, -22.5].forEach((rx) => {{
+      const sideRail = new THREE.Mesh(new THREE.BoxGeometry(0.25, 1.1, 286), railingMat);
       sideRail.position.set(rx, railY, 0);
       shipGroup.add(sideRail);
     }});
-    [-140, 140].forEach((rz) => {{
+    [-144, 144].forEach((rz) => {{
       const endRail = new THREE.Mesh(new THREE.BoxGeometry(44, 1.1, 0.25), railingMat);
       endRail.position.set(0, railY, rz);
       shipGroup.add(endRail);
     }});
 
-    // === BOLLARDS / MANIFOLD POINTS at midship (toward LUP side, -x) ===
-    // Mooring bollards along port side facing dolphins
-    [-24, -24].forEach((bx) => {{
-      [-40, -15, 10, 35, 60].forEach((bz) => {{
-        const bollard = new THREE.Mesh(new THREE.CylinderGeometry(1.1, 1.1, 2.2, 12), bollardMat);
-        bollard.position.set(bx, 18, bz);
-        shipGroup.add(bollard);
-      }});
+    // === SHIP FAIRLEAD CHOCKS & TWIN BOLLARDS ON JETTY SIDE (+x local = +22.5 -> world x = -149.5) ===
+    const chockZs = [-154, -148, -142, -128, -118, -98, -88, -56, -38, 38, 56, 88, 98, 118, 128, 142, 148, 154];
+    chockZs.forEach((cz) => {{
+      const localX = Math.abs(cz) > 140 ? (22.5 - (Math.abs(cz) - 140) * 0.45) : 22.6;
+      const bitt = new THREE.Mesh(new THREE.CylinderGeometry(0.65, 0.65, 1.8, 12), bollardMat);
+      bitt.position.set(localX - 1.2, 17.6, cz);
+      shipGroup.add(bitt);
+      const chock = new THREE.Mesh(new THREE.BoxGeometry(0.7, 0.9, 1.4), steelMat);
+      chock.position.set(localX, 17.5, cz);
+      shipGroup.add(chock);
     }});
 
     terminalGroup.add(shipGroup);

@@ -102,3 +102,28 @@ def test_terminal_3d_scales_footprint_and_has_access_routes(sample_simulation_re
     assert "length_scale" in short
     assert '"length_scale": 1.0' in short
     assert '"length_scale": 2.5' in long
+
+
+def test_terminal_3d_irregular_coast_earth_terrain_and_jetty_side_mooring_qrh(sample_simulation_results):
+    html = generate_terminal_3d_html(sample_simulation_results, length_m=500.0)
+    # 1. Irregular coastline profile (JS + GLSL water shader sync)
+    assert "getShorelineWorldX" in html
+    assert "shoreProfileX" in html
+    assert "buildNaturalCoastAndTerrain" in html
+    # 2. Earth-toned onshore terrain colors (wet sand, beach sand, earth/soil brown, terracotta)
+    assert "0x8b6843" in html
+    assert "0x9c6b43" in html
+    assert "0xc4a77d" in html
+    # 3. Jetty-side (iskele tarafı) Breasting Dolphins (BD-1..4 at x=-139) and Mooring Dolphins (MD-1..6 at x=-108..-118)
+    assert "breastingDolphinPositions" in html
+    assert "mooringDolphinPositions" in html
+    assert "x: -139, z: -64" in html
+    assert "x: -108, z: -182" in html
+    # Old wrong seaward position (-172) for mooring dolphins must not exist
+    assert "{ x: -172, z: -180, name: 'MD-1' }" not in html
+    # 4. Properly scaled Quick Release Hooks (QRH) and catenary mooring lines
+    assert "createQuickReleaseHookUnit" in html
+    assert "createMooringHawser" in html
+    assert "createCatwalkBridge" in html
+    assert "mooringLinePairs" in html
+
