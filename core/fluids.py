@@ -162,11 +162,13 @@ class FluidManager:
                 p_b = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, self._backend_string))
                 if math.isfinite(p_b) and 1000.0 < p_b < 1.5e7:
                     self._psat_cache[cache_key] = p_b
+                    self._psat_cache[cache_key] = p_b
                     return p_b
                 raise ValueError("Invalid mixture Psat from CoolProp")
             else:
                 p_m = float(CP.PropsSI("P", "T", T_clamped, "Q", 0, "Methane"))
                 if math.isfinite(p_m) and p_m > 0.0:
+                    self._psat_cache[cache_key] = p_m
                     self._psat_cache[cache_key] = p_m
                     return p_m
                 raise ValueError("Invalid Methane Psat")
@@ -176,6 +178,7 @@ class FluidManager:
             Pc = 4599200.0  # Pa
             tau = 1.0 - (T_clamped / Tc)
             if tau <= 0:
+                self._psat_cache[cache_key] = Pc
                 self._psat_cache[cache_key] = Pc
                 return Pc
             a1, a2, a3, a4 = -6.02242, 1.26652, -0.5707, -1.366
@@ -189,6 +192,7 @@ class FluidManager:
                     if entry is not None:
                         vol_shift += frac * float(entry["volatility_factor"])
                 p_sat *= max(0.15, 1.0 + vol_shift)
+            self._psat_cache[cache_key] = p_sat
             self._psat_cache[cache_key] = p_sat
             return p_sat
 
@@ -233,8 +237,8 @@ class FluidManager:
         Evaluate real fluid properties at temperature T (K) and pressure P (Pa).
         Uses quantized caching for fast finite-volume integration.
         """
-        # Cache key rounded to 0.05 K and 100 Pa
-        cache_key = (round(T, 2), round(P, -2))
+        # Cache key rounded to 0.1 K and 100 Pa for mixture performance
+        cache_key = (round(T, 1), round(P, -2))
         if cache_key in self._cache:
             return self._cache[cache_key]
 
