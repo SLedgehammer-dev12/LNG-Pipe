@@ -69,3 +69,13 @@ def test_unit_switch_converts_input_and_output():
     assert abs(_inputs(at)["Giriş Toplam Basıncı P_in"] - 3.98675) < 0.01
     assert any("°F" in m.value for m in at.markdown if "metric-value" in m.value)
     assert any("bar (g)" in m.value for m in at.markdown if "metric-value" in m.value)
+
+
+def test_recirculation_flow_checkpoint_warning_in_ui():
+    at = _run_app()
+    for n in at.sidebar.number_input:
+        if n.label == "Dönüş Hattı Debisi":
+            n.set_value(0.2)
+    at.run()
+    assert not at.exception, at.exception[0].value if at.exception else "unknown error"
+    assert any("KRİTİK SİRKÜLASYON DEBİSİ UYARISI" in err.value for err in at.error)

@@ -19,7 +19,14 @@ from core.mechanics import (
 from core.units import from_si, delta_from_si, unit_display_label, delta_unit_display_label
 
 
-def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = "°C", press_unit: str = "bar", cell_data: list = None) -> bytes:
+def generate_pdf_report(
+    results,
+    project_info: Dict[str, Any],
+    temp_unit: str = "°C",
+    press_unit: str = "bar (abs)",
+    cell_data: list = None,
+    terminal_ops=None,
+) -> bytes:
     """Generates an executive engineering calculation sheet in PDF format."""
     buffer = io.BytesIO()
     doc = SimpleDocTemplate(
@@ -220,7 +227,7 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
 
     # Evaluate using robust core domain modules
     rho_eval = results.density_kg_m3[0] if (hasattr(results, "density_kg_m3") and len(results.density_kg_m3) > 0) else 425.0
-    t_ops = evaluate_terminal_operations(
+    t_ops = terminal_ops if terminal_ops is not None else evaluate_terminal_operations(
         total_heat_w=results.total_heat_ingress_w,
         length_m=cfg.length_m,
         inner_diam_m=cfg.inner_diameter_m,
@@ -244,9 +251,12 @@ def generate_pdf_report(results, project_info: Dict[str, Any], temp_unit: str = 
     omega_eval = calculate_thermal_contraction_and_omega_loop(spec_eval, anchor_distance_m=min(cfg.length_m, 200.0), outer_diameter_m=d_out_eval)
     surge_eval = calculate_joukowsky_surge(spec_eval, v_in, valve_closure_time_s=15.0, wall_thickness_m=0.006)
 
+    recirc_status_str = "DÜŞÜK DEBİ UYARISI" if t_ops.recirc_flow_deficit_warning else "UYGUN"
     terminal_data = [
         [Paragraph("Statik Hat BOG Üretim Hızı", bold_style), Paragraph(f"{t_ops.bog_rate_kg_h:.1f} kg/saat ({t_ops.bog_rate_nm3_h:.1f} Nm³/saat)", body_style),
-         Paragraph("Min. Cooldown Sirkülasyon Debisi", bold_style), Paragraph(f"{t_ops.recirc_min_flow_m3_h:.1f} m³/saat (P-201: {t_ops.recirc_pump_power_kw:.1f} kW)", body_style)],
+         Paragraph("Min. Cooldown Debisi & Gücü (P-201)", bold_style), Paragraph(f"{t_ops.recirc_min_flow_m3_h:.1f} m³/saat | Min. Güç: {t_ops.recirc_min_pump_power_kw:.2f} kW", body_style)],
+        [Paragraph("Seçilen Sirkülasyon Debisi & Gücü", bold_style), Paragraph(f"{t_ops.user_recirc_flow_m3_h:.1f} m³/saat | Güç: {t_ops.user_recirc_pump_power_kw:.2f} kW ({recirc_status_str})", body_style),
+         Paragraph("Kara Tankı & Toplam Terminal BOG", bold_style), Paragraph(f"Tank: {t_ops.tank_bog_rate_kg_h:.1f} kg/saat ({t_ops.tank_heat_ingress_w/1000.0:.1f} kW)<br/>Toplam BOG: {t_ops.total_terminal_bog_kg_h:.1f} kg/saat ({t_ops.total_terminal_bog_nm3_h:.0f} Nm³/saat)", body_style)],
         [Paragraph("Gemiden Karaya Boşaltım Pompalaması", bold_style), Paragraph(f"{t_ops.unloading_flow_m3_h:.1f} m³/saat | TDH: {t_ops.unloading_pump_head_m:.1f} mLC", body_style),
          Paragraph("Kargo Pompası Motor Gücü & Öneri", bold_style), Paragraph(f"Toplam {t_ops.unloading_pump_power_kw:.1f} kW<br/>{t_ops.unloading_pump_recommendation}", body_style)],
         [Paragraph("Hat Isıl Büzülme Miktarı (ΔL)", bold_style), Paragraph(f"{omega_eval['contraction_rate_mm_per_m']:.2f} mm/m ({omega_eval['total_line_contraction_m']:.2f} m/km)", body_style),

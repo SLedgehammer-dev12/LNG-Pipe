@@ -4,6 +4,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import json
+import math
 
 from core.fluids import (
     FluidManager,
@@ -364,6 +365,22 @@ with st.sidebar.expander("📏 Boru Geometrisi & Hat Rotası", expanded=True):
         "Dönüş Hattı Debisi", "mass_flow", "return_flow",
         5.0, min_si=0.0, max_si=500.0, step_si=1.0,
     )
+    recirc_suction_p_pa, _ = unit_input(
+        "P-201 Emme Basıncı P_emme", "pressure", "recirc_suction_p",
+        1.15e5, min_si=1.013e5, max_si=10.0e5, step_si=0.1e5,
+    )
+    recirc_target_p_pa, _ = unit_input(
+        "Sirkülasyon Hedef Basıncı P_hedef", "pressure", "recirc_target_p",
+        5.0e5, min_si=1.05e5, max_si=40.0e5, step_si=0.5e5,
+    )
+    allowable_recirc_dt_k = st.number_input(
+        "İzin Verilen Cooldown Isınması ΔT_izin (K)",
+        min_value=0.2,
+        max_value=5.0,
+        value=1.5,
+        step=0.1,
+        help="EN 1473 / SIGTTO: Sirkülasyon devresinde iki fazlı flaş ve termal tabakalaşmayı (stratification/bowing) önlemek için standart 1.0 - 2.0 K (varsayılan 1.5 K) alınır.",
+    )
 
 # Initialize session state for multi-component composition and multi-layer insulation
 if "custom_composition" not in st.session_state:
@@ -597,7 +614,7 @@ with st.sidebar.expander("☀️ Çevre ve Dış Ortam", expanded=False):
         3.0, min_si=0.5, max_si=30.0, step_si=0.5,
     )
 
-with st.sidebar.expander("📐 ASME B31.3 & Vana Kapanma (Surge)", expanded=False):
+with st.sidebar.expander("📐 ASME B31.3, Pompa & Kara Tankı (BOG)", expanded=False):
     design_p_pa, _ = unit_input(
         "Tasarım Basıncı P_design", "pressure", "design_p",
         20e5, min_si=2e5, max_si=100e5, step_si=2e5,
@@ -607,6 +624,41 @@ with st.sidebar.expander("📐 ASME B31.3 & Vana Kapanma (Surge)", expanded=Fals
     anchor_dist_m, _ = unit_input(
         "Sabit Mesnet Aralığı", "length", "anchor",
         min(float(length_m), 180.0), min_si=20.0, max_si=500.0, step_si=10.0,
+    )
+    st.markdown("###### ⚙️ Pompa & Elektrik Motoru Verimleri")
+    c_pe1, c_pe2 = st.columns(2)
+    with c_pe1:
+        recirc_pump_eff_pct = st.number_input(
+            "P-201 Pompa Verimi η_p (%)",
+            min_value=20.0, max_value=95.0, value=70.0, step=1.0,
+            key="recirc_pump_eff_pct",
+        )
+        unload_pump_eff_pct = st.number_input(
+            "Kargo Pompa Verimi η_p (%)",
+            min_value=20.0, max_value=95.0, value=75.0, step=1.0,
+            key="unload_pump_eff_pct",
+        )
+    with c_pe2:
+        recirc_motor_eff_pct = st.number_input(
+            "P-201 Motor Verimi η_m (%)",
+            min_value=50.0, max_value=99.0, value=90.0, step=1.0,
+            key="recirc_motor_eff_pct",
+        )
+        unload_motor_eff_pct = st.number_input(
+            "Kargo Motor Verimi η_m (%)",
+            min_value=50.0, max_value=99.0, value=92.0, step=1.0,
+            key="unload_motor_eff_pct",
+        )
+    st.markdown("###### 🛢️ Kara LNG Depolama Tankı (T-201) BOG Girdileri")
+    tank_volume_m3 = st.number_input(
+        "Kara Tankı Sıvı LNG Hacmi V_tank (m³)",
+        min_value=0.0, max_value=500000.0, value=160000.0, step=10000.0,
+        help="Tam saha (Total Terminal) BOG kompresör yükü hesabında kara tankı ısı kazancını dahil eder.",
+    )
+    tank_bor_pct_day = st.number_input(
+        "Tank Günlük Kaynama Oranı BOR_tank (%/gün)",
+        min_value=0.0, max_value=0.50, value=0.05, step=0.005, format="%.3f",
+        help="Modern tam kuşatmalı (Full Containment) kriyojenik kara tankları için tipik tasarım değeri %0.04 - %0.05/gün'dür.",
     )
 
 if is_3d_mode:
@@ -698,16 +750,15 @@ sim_results = run_simulation(
     is_3d_mode, n_radial, n_azimuthal, n_axial
 )
 
-# Return (recirculation) line: 1D solve for real station data in the 3D inspector.
-if return_mass_flow_kg_s > 0.0:
-    return_results = run_simulation(
-        length_m, return_diameter_mm, return_wall_thickness_mm, PIPE_MATERIALS[pipe_mat_name],
-        roughness_um, inclination_deg, is_pure_methane, comp_tuple, inlet_t_c, inlet_p_bar,
-        return_mass_flow_kg_s, layers_tuple, amb_temp_c, wind_speed_m_s,
-        False, 8, 8, max(20, n_axial)
-    )
-else:
-    return_results = None
+# Return (recirculation) line: 1D solve at the user-configured target pressure for real station data.
+_ret_eval_flow = return_mass_flow_kg_s if return_mass_flow_kg_s > 0.0 else 5.0
+_ret_eval_results = run_simulation(
+    length_m, return_diameter_mm, return_wall_thickness_mm, PIPE_MATERIALS[pipe_mat_name],
+    roughness_um, inclination_deg, is_pure_methane, comp_tuple, inlet_t_c, recirc_target_p_pa / 1e5,
+    _ret_eval_flow, layers_tuple, amb_temp_c, wind_speed_m_s,
+    False, 8, 8, max(20, n_axial)
+)
+return_results = _ret_eval_results if return_mass_flow_kg_s > 0.0 else None
 
 # --- MAIN DISPLAY ---
 mode_label = "3D Sonlu Hacimler (Silindirik r, θ, z)" if is_3d_mode else "1D Sonlu Hacimler (Eksenel)"
@@ -856,9 +907,20 @@ terminal_ops = evaluate_terminal_operations(
     fluid_density=rho_avg,
     specific_heat=3480.0,
     latent_heat=latent_heat_val,
-    delta_t_allowable=1.5,
+    delta_t_allowable=allowable_recirc_dt_k,
     pressure_drop_pa=sim_results.total_pressure_drop_pa,
-    main_mass_flow_kg_s=mass_flow_kg_s
+    main_mass_flow_kg_s=mass_flow_kg_s,
+    return_heat_w=_ret_eval_results.total_heat_ingress_w,
+    return_pressure_drop_pa=_ret_eval_results.total_pressure_drop_pa if return_results is not None else 0.0,
+    user_recirc_flow_kg_s=return_mass_flow_kg_s,
+    recirc_suction_pressure_pa=recirc_suction_p_pa,
+    recirc_target_pressure_pa=recirc_target_p_pa,
+    recirc_pump_eff=recirc_pump_eff_pct / 100.0,
+    recirc_motor_eff=recirc_motor_eff_pct / 100.0,
+    unload_pump_eff=unload_pump_eff_pct / 100.0,
+    unload_motor_eff=unload_motor_eff_pct / 100.0,
+    tank_volume_m3=tank_volume_m3,
+    tank_bor_pct_day=tank_bor_pct_day,
 )
 
 d_outer_m = (diameter_mm + 2.0 * wall_thickness_mm) / 1000.0
@@ -876,16 +938,33 @@ surge_mech = calculate_joukowsky_surge(pipe_spec, v_nom, valve_closure_time_s, w
 omega_mech = calculate_thermal_contraction_and_omega_loop(pipe_spec, anchor_distance_m=anchor_dist_m, outer_diameter_m=d_outer_m)
 
 with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama", expanded=True):
+    # Sirkülasyon Debisi Kontrol Noktası (Checkpoint Banner)
+    if terminal_ops.recirc_flow_deficit_warning:
+        st.error(terminal_ops.recirc_flow_warning_msg)
+    else:
+        st.success(terminal_ops.recirc_flow_warning_msg)
+
     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
     bog_kg_s = terminal_ops.bog_rate_kg_h / 3600.0
+    tot_bog_kg_s = terminal_ops.total_terminal_bog_kg_h / 3600.0
     p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, p_unit)
     surge_d = _dp_show(surge_mech["actual_surge_bar"] * 1e5, p_unit)
     peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, p_unit)
     surge_limit_d = _p_show(design_p_bar * 1e5 * 1.33, p_unit)
     with col_t1:
-        st.markdown(f"**BOG Üretim Hızı (Standby):**<br/><span style='color:#f0883e; font-size:16px; font-weight:700;'>{_m_show(bog_kg_s, flow_unit):.2f} {u_f}</span><br/><span style='color:#8b949e; font-size:12px;'>({terminal_ops.bog_rate_nm3_h:.1f} Nm³/h | BOR: %{terminal_ops.boil_off_rate_pct_day:.2f}/gün)</span>", unsafe_allow_html=True)
+        st.markdown(
+            f"**Hat & Saha BOG Yükü:**<br/>"
+            f"<span style='color:#f0883e; font-size:16px; font-weight:700;'>Hat: {_m_show(bog_kg_s, flow_unit):.2f} {u_f}</span><br/>"
+            f"<span style='color:#8b949e; font-size:12px;'>Toplam Terminal BOG: {_m_show(tot_bog_kg_s, flow_unit):.2f} {u_f} ({terminal_ops.total_terminal_bog_nm3_h:.0f} Nm³/h)</span>",
+            unsafe_allow_html=True,
+        )
     with col_t2:
-        st.markdown(f"**P-201 Cooldown Sirkülasyonu:**<br/><span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_flow_m3_h:.1f} m³/h</span><br/><span style='color:#8b949e; font-size:12px;'>(Şaft Gücü: {terminal_ops.recirc_pump_power_kw:.1f} kW | Basma: {terminal_ops.recirc_pump_head_m:.1f} mLC)</span>", unsafe_allow_html=True)
+        st.markdown(
+            f"**P-201 Minimum Gerekli Güç:**<br/>"
+            f"<span style='color:#39d353; font-size:16px; font-weight:700;'>{terminal_ops.recirc_min_pump_power_kw:.1f} kW (@ {terminal_ops.recirc_min_flow_m3_h:.1f} m³/h)</span><br/>"
+            f"<span style='color:#8b949e; font-size:12px;'>Seçilen Debide Güç: {terminal_ops.user_recirc_pump_power_kw:.1f} kW (@ {terminal_ops.user_recirc_flow_m3_h:.1f} m³/h)</span>",
+            unsafe_allow_html=True,
+        )
     with col_t3:
         # B6: mill undertolerance — worst-case actual thickness (0.875*t_nom) must meet t_required
         t_ok = (wall_thickness_mm * (1.0 - pipe_spec.mill_tolerance)) >= asme_mech["t_required_min_mm"]
@@ -895,14 +974,42 @@ with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama"
         surge_safe = surge_mech["peak_line_pressure_bar"] <= design_p_bar * 1.33
         st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_dp}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
 
-    # Pompalama Önerisi ve Güç Analizi Alt Satırı
+    # Pompalama Önerisi, Verim ve Kara Tankı BOG Analizi Alt Satırı
     st.markdown("---")
-    col_p1, col_p2 = st.columns(2)
+    col_p1, col_p2, col_p3 = st.columns(3)
     with col_p1:
-        st.info(f"⚓ **Gemiden Karaya Ana Boşaltım Pompalaması (Cargo Pumps):**\n- **Toplam Boşaltım Debisi:** {terminal_ops.unloading_flow_m3_h:.1f} m³/h ({mass_flow_kg_s:.1f} kg/s)\n- **Manometrik Basma Yüksekliği (TDH):** {terminal_ops.unloading_pump_head_m:.1f} mLC ({terminal_ops.unloading_pump_head_m * rho_avg * 9.80665 / 1e5:.2f} bar)\n- **Toplam Şaft / Motor Gücü:** {terminal_ops.unloading_pump_power_kw:.1f} kW\n- **Öneri:** {terminal_ops.unloading_pump_recommendation}")
+        st.info(
+            f"⚓ **Gemiden Karaya Ana Boşaltım (Cargo Pumps):**\n"
+            f"- **Toplam Boşaltım Debisi:** {terminal_ops.unloading_flow_m3_h:.1f} m³/h ({mass_flow_kg_s:.1f} kg/s)\n"
+            f"- **Manometrik Basma Yüksekliği (TDH):** {terminal_ops.unloading_pump_head_m:.1f} mLC ({terminal_ops.unloading_pump_head_m * rho_avg * 9.80665 / 1e5:.2f} bar)\n"
+            f"- **Verimler:** $\\eta_{{pompa}} = \\%{unload_pump_eff_pct:.0f}$, $\\eta_{{motor}} = \\%{unload_motor_eff_pct:.0f}$\n"
+            f"- **Toplam Elektrik Motor Gücü:** **{terminal_ops.unloading_pump_power_kw:.1f} kW**\n"
+            f"- **Öneri:** {terminal_ops.unloading_pump_recommendation}"
+        )
     with col_p2:
         strat_warn = "⚠️ Akış hızı düşük (Richardson tabakalaşma riski var)" if terminal_ops.stratification_risk else "✓ Akış hızı yeterli (Termal eğilme / tabakalaşma önlendi)"
-        st.success(f"🔄 **Karadan Gemiye Soğuk Tutma Sirkülasyonu (P-201 Recirculation):**\n- **Minimum Soğuk Tutma Debisi:** {terminal_ops.recirc_min_flow_m3_h:.1f} m³/h ({terminal_ops.recirc_velocity_m_s:.2f} m/s)\n- **P-201 Basma Yüksekliği (Circuit TDH):** {terminal_ops.recirc_pump_head_m:.1f} mLC ({terminal_ops.recirc_pump_head_m * rho_avg * 9.80665 / 1e5:.2f} bar)\n- **P-201 Motor Şaft Gücü:** {terminal_ops.recirc_pump_power_kw:.1f} kW\n- **Termal Denge Durumu:** {strat_warn}")
+        p_suct_d = _p_show(recirc_suction_p_pa, p_unit)
+        p_targ_d = _p_show(recirc_target_p_pa, p_unit)
+        dt_user_str = f"{terminal_ops.user_recirc_delta_t_k:.2f} K" if math.isfinite(terminal_ops.user_recirc_delta_t_k) else "∞ (Akış Yok)"
+        st.success(
+            f"🔄 **Karadan Gemiye Sirkülasyon Pompası (P-201):**\n"
+            f"- **Basınçlandırma Hedefi:** {p_suct_d:.2f} $\\rightarrow$ {p_targ_d:.2f} {u_p} (TDH: {terminal_ops.recirc_pump_head_m:.1f} mLC)\n"
+            f"- **Min. Gerekli Cooldown Debisi ($\\Delta T \\le {allowable_recirc_dt_k:.1f}$ K):** **{terminal_ops.recirc_min_flow_kg_s:.2f} kg/s** ({terminal_ops.recirc_min_flow_m3_h:.1f} m³/h)\n"
+            f"- **Minimum Gerekli Pompa Gücü:** **{terminal_ops.recirc_min_pump_power_kw:.2f} kW** ($\\eta_p=\\%{recirc_pump_eff_pct:.0f}, \\eta_m=\\%{recirc_motor_eff_pct:.0f}$)\n"
+            f"- **Seçilen Debideki Pompa Gücü ({return_mass_flow_kg_s:.2f} kg/s):** **{terminal_ops.user_recirc_pump_power_kw:.2f} kW** (Devre $\\Delta T = {dt_user_str}$)\n"
+            f"- **Termal Denge Durumu:** {strat_warn}"
+        )
+    with col_p3:
+        q_loop_kw = (sim_results.total_heat_ingress_w + _ret_eval_results.total_heat_ingress_w) / 1000.0
+        q_tank_kw = terminal_ops.tank_heat_ingress_w / 1000.0
+        q_pump_kw = terminal_ops.pump_heat_to_lng_w / 1000.0
+        st.warning(
+            f"🛢️ **Kara LNG Tankı (T-201) & Toplam Terminal BOG Bütçesi:**\n"
+            f"- **Boru Devresi Isı Kazancı ($\\dot{{Q}}_{{ana}} + \\dot{{Q}}_{{dönüş}}$):** {q_loop_kw:.2f} kW ({terminal_ops.bog_rate_kg_h:.1f} kg/h)\n"
+            f"- **Kara Tankı Isı Kazancı ($V={tank_volume_m3:,.0f}$ m³, BOR=%{tank_bor_pct_day:.3f}/gün):** **{q_tank_kw:.1f} kW** ({terminal_ops.tank_bog_rate_kg_h:.1f} kg/h)\n"
+            f"- **P-201 Pompa Şaft Isısı ($\\dot{{Q}}_{{pompa}}$):** {q_pump_kw:.2f} kW\n"
+            f"- **Toplam Terminal BOG Kompresör Yükü:** **{terminal_ops.total_terminal_bog_kg_h:.1f} kg/h** ({terminal_ops.total_terminal_bog_nm3_h:.0f} Nm³/h)"
+        )
 
 # --- VIEW TABS ---
 tab_schematic, tab_3d_terminal, tab_3d_pipe, tab_charts, tab_table, tab_report = st.tabs([
@@ -1068,7 +1175,8 @@ with tab_report:
     compliance_rows = [
         {"Kontrol Kriteri": "Akış Hızı (Stratifikasyon & Statik Sınırı)", "Standart": "EN 1473: 0.5 - 4.5 m/s", "Mevcut Değer": f"{v_approx:.2f} m/s", "Durum": "✓ UYGUN" if 0.5 <= v_approx <= 4.5 else "⚠️ UYARI"},
         {"Kontrol Kriteri": "Flaş & Kavitasyon Marjı", "Standart": "P - Psat ≥ 0.5 bar", "Mevcut Değer": f"{m_bar:.2f} bar", "Durum": "✓ UYGUN" if m_bar >= 0.5 else "⚠️ RİSKLİ"},
-        {"Kontrol Kriteri": "Faz Korunumu (Tek Faz Sıvı)", "Standart": "Boil-off = 0", "Mevcut Değer": "Tam Sıvı" if not has_flashed else f"Flaş Başlangıcı", "Durum": "✓ UYGUN" if not has_flashed else "❌ KAYNAMA"}
+        {"Kontrol Kriteri": "Faz Korunumu (Tek Faz Sıvı)", "Standart": "Boil-off = 0", "Mevcut Değer": "Tam Sıvı" if not has_flashed else f"Flaş Başlangıcı", "Durum": "✓ UYGUN" if not has_flashed else "❌ KAYNAMA"},
+        {"Kontrol Kriteri": f"Sirkülasyon Debisi Kontrolü (ΔT ≤ {allowable_recirc_dt_k:.1f} K)", "Standart": f"m ≥ {terminal_ops.recirc_min_flow_kg_s:.2f} kg/s", "Mevcut Değer": f"{return_mass_flow_kg_s:.2f} kg/s ({terminal_ops.user_recirc_flow_m3_h:.1f} m³/h)", "Durum": "✓ UYGUN" if not terminal_ops.recirc_flow_deficit_warning else "⚠️ DÜŞÜK DEBİ"}
     ]
     st.table(pd.DataFrame(compliance_rows))
 
@@ -1091,7 +1199,7 @@ with tab_report:
                 v = df_data[h][r]
                 row.append(str(v) if isinstance(v, float) else str(v))
             pdf_cell_data.append(row)
-    pdf_bytes = generate_pdf_report(sim_results, meta_dict, temp_unit=t_unit, press_unit=p_unit, cell_data=pdf_cell_data)
+    pdf_bytes = generate_pdf_report(sim_results, meta_dict, temp_unit=t_unit, press_unit=p_unit, cell_data=pdf_cell_data, terminal_ops=terminal_ops)
     st.download_button(
         label="📄 Resmi PDF Mühendislik Hesaplama Raporunu İndir",
         data=pdf_bytes,

@@ -94,3 +94,92 @@ def test_evaluate_terminal_operations_downhill_positive_head():
     )
     assert metrics.recirc_pump_head_m > 0.0
     assert metrics.recirc_pump_power_kw > 0.0
+
+
+def test_recirculation_flow_deficit_checkpoint_and_min_vs_user_power():
+    # Total loop heat = 15 kW (main) + 6 kW (return) = 21 kW
+    # m_min = 21000 / (3480 * 1.5) = 4.023 kg/s
+    m_low = evaluate_terminal_operations(
+        total_heat_w=15000.0,
+        return_heat_w=6000.0,
+        length_m=500.0,
+        inner_diam_m=0.20,
+        fluid_density=425.0,
+        specific_heat=3480.0,
+        latent_heat=510000.0,
+        delta_t_allowable=1.5,
+        pressure_drop_pa=0.8e5,
+        return_pressure_drop_pa=0.7e5,
+        user_recirc_flow_kg_s=2.0,  # Below 4.023 kg/s minimum!
+        recirc_suction_pressure_pa=1.15e5,
+        recirc_target_pressure_pa=5.0e5,
+    )
+    assert m_low.recirc_flow_deficit_warning is True
+    assert "KRİTİK SİRKÜLASYON DEBİSİ UYARISI" in m_low.recirc_flow_warning_msg
+    assert m_low.user_recirc_delta_t_k > 1.5
+    assert m_low.recirc_min_pump_power_kw > m_low.user_recirc_pump_power_kw > 0.0
+
+    # Now provide sufficient flow (6.0 kg/s > 4.023 kg/s)
+    m_ok = evaluate_terminal_operations(
+        total_heat_w=15000.0,
+        return_heat_w=6000.0,
+        length_m=500.0,
+        inner_diam_m=0.20,
+        fluid_density=425.0,
+        specific_heat=3480.0,
+        latent_heat=510000.0,
+        delta_t_allowable=1.5,
+        pressure_drop_pa=0.8e5,
+        return_pressure_drop_pa=0.7e5,
+        user_recirc_flow_kg_s=6.0,
+        recirc_suction_pressure_pa=1.15e5,
+        recirc_target_pressure_pa=5.0e5,
+    )
+    assert m_ok.recirc_flow_deficit_warning is False
+    assert "minimum gerekli soğuk tutma debisini" in m_ok.recirc_flow_warning_msg
+    assert m_ok.user_recirc_delta_t_k <= 1.5
+    assert m_ok.user_recirc_pump_power_kw > m_ok.recirc_min_pump_power_kw
+
+
+def test_custom_pump_and_motor_efficiencies_and_onshore_tank_bog():
+    base = evaluate_terminal_operations(
+        total_heat_w=15000.0,
+        length_m=500.0,
+        inner_diam_m=0.20,
+        fluid_density=425.0,
+        specific_heat=3480.0,
+        latent_heat=510000.0,
+        pressure_drop_pa=1.5e5,
+        main_mass_flow_kg_s=100.0,
+        recirc_pump_eff=0.70,
+        recirc_motor_eff=0.90,
+        unload_pump_eff=0.80,
+        unload_motor_eff=0.95,
+        tank_volume_m3=160000.0,
+        tank_bor_pct_day=0.05,
+    )
+    lower_eff = evaluate_terminal_operations(
+        total_heat_w=15000.0,
+        length_m=500.0,
+        inner_diam_m=0.20,
+        fluid_density=425.0,
+        specific_heat=3480.0,
+        latent_heat=510000.0,
+        pressure_drop_pa=1.5e5,
+        main_mass_flow_kg_s=100.0,
+        recirc_pump_eff=0.50,
+        recirc_motor_eff=0.80,
+        unload_pump_eff=0.60,
+        unload_motor_eff=0.85,
+        tank_volume_m3=160000.0,
+        tank_bor_pct_day=0.05,
+    )
+    # Lower pump & motor efficiencies must require higher electrical motor power
+    assert lower_eff.recirc_min_pump_power_kw > base.recirc_min_pump_power_kw
+    assert lower_eff.unloading_pump_power_kw > base.unloading_pump_power_kw
+
+    # Onshore tank BOG check: 160,000 m³ * 425 kg/m³ = 68,000,000 kg
+    # 0.05%/day = 34,000 kg/day = 1416.67 kg/h
+    assert abs(base.tank_bog_rate_kg_h - 1416.67) < 1.0
+    assert base.tank_heat_ingress_w > 190000.0  # ~200.7 kW
+    assert base.total_terminal_bog_kg_h > base.tank_bog_rate_kg_h + base.bog_rate_kg_h

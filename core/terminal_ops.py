@@ -1,10 +1,11 @@
 """Terminal Operations Engineering: BOG Generation & Cooldown Recirculation Module.
 
-Complies with: EN 1473, GIIGNL Custody Transfer Handbook, API 521.
+Complies with: EN 1473, GIIGNL Custody Transfer Handbook, API 521, API 625.
 """
 
 import math
 from dataclasses import dataclass
+from typing import Optional
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,18 @@ class TerminalOperatingMetrics:
     unloading_pump_power_kw: float = 0.0
     unloading_pump_recommendation: str = ""
     recirc_pump_recommendation: str = ""
+    recirc_min_pump_power_kw: float = 0.0
+    user_recirc_flow_kg_s: float = 0.0
+    user_recirc_flow_m3_h: float = 0.0
+    user_recirc_pump_power_kw: float = 0.0
+    user_recirc_delta_t_k: float = 0.0
+    recirc_flow_deficit_warning: bool = False
+    recirc_flow_warning_msg: str = ""
+    tank_heat_ingress_w: float = 0.0
+    tank_bog_rate_kg_h: float = 0.0
+    pump_heat_to_lng_w: float = 0.0
+    total_terminal_bog_kg_h: float = 0.0
+    total_terminal_bog_nm3_h: float = 0.0
 
 
 def evaluate_terminal_operations(
@@ -37,45 +50,100 @@ def evaluate_terminal_operations(
     pressure_drop_pa: float = 1.5e5,
     main_mass_flow_kg_s: float = 0.0,
     tank_backpressure_pa: float = 0.3e5,
-    fitting_loss_factor: float = 0.20
+    fitting_loss_factor: float = 0.20,
+    return_heat_w: float = 0.0,
+    return_pressure_drop_pa: float = 0.0,
+    user_recirc_flow_kg_s: Optional[float] = None,
+    recirc_suction_pressure_pa: float = 1.15e5,
+    recirc_target_pressure_pa: float = 0.0,
+    recirc_pump_eff: float = 0.70,
+    recirc_motor_eff: float = 0.90,
+    unload_pump_eff: float = 0.75,
+    unload_motor_eff: float = 0.92,
+    tank_volume_m3: float = 0.0,
+    tank_bor_pct_day: float = 0.05,
 ) -> TerminalOperatingMetrics:
     """Calculates BOG rates, standby boil-off, and pumping requirements for both unloading and cooldown recirculation."""
-    # 1. BOG Rates during standby/heat ingress
-    bog_kg_s = total_heat_w / max(latent_heat, 200000.0)
-    bog_kg_h = bog_kg_s * 3600.0
+    h_fg = max(latent_heat, 200000.0)
     rho_norm = 0.736  # kg/Nm3 for LNG BOG at 0 °C, 1.01325 bar
-    bog_nm3_h = bog_kg_h / rho_norm
-
     rho_liq = max(fluid_density, 1.0)
     cp_val = max(specific_heat, 500.0)
     dt_allow = max(delta_t_allowable, 0.1)
+
+    eta_p_rec = max(0.05, min(recirc_pump_eff, 1.0))
+    eta_m_rec = max(0.05, min(recirc_motor_eff, 1.0))
+    eta_p_unl = max(0.05, min(unload_pump_eff, 1.0))
+    eta_m_unl = max(0.05, min(unload_motor_eff, 1.0))
+
+    # Total pipeline loop heat ingress (main + return line)
+    q_loop_w = max(0.0, total_heat_w) + max(0.0, return_heat_w)
+
+    # 1. BOG Rates during standby/heat ingress in pipeline
+    bog_kg_s = q_loop_w / h_fg
+    bog_kg_h = bog_kg_s * 3600.0
+    bog_nm3_h = bog_kg_h / rho_norm
 
     # Line liquid inventory
     line_vol = (math.pi / 4.0) * (inner_diam_m ** 2) * length_m
     inventory_kg = line_vol * rho_liq
     bor_pct_day = (bog_kg_h * 24.0 / inventory_kg) * 100.0 if inventory_kg > 0 else 0.0
 
-    # 2. Recirculation (Cooldown Mode to maintain line at <= -161 C)
-    m_recirc_kg_s = total_heat_w / (cp_val * dt_allow)
+    # 2. Minimum Recirculation (Cooldown Mode to maintain line within delta_t_allowable)
+    m_recirc_kg_s = q_loop_w / (cp_val * dt_allow)
     q_recirc_m3_h = (m_recirc_kg_s / rho_liq) * 3600.0
     pipe_area = (math.pi / 4.0) * (inner_diam_m ** 2)
     v_recirc = m_recirc_kg_s / (rho_liq * pipe_area) if pipe_area > 0 else 0.0
     stratification_risk = v_recirc < 0.20  # Richardson stratification / bowing risk
 
-    # 3. Recirculation Pump P-201 Head & Shaft Power (70% pump, 90% motor efficiency)
-    # Recirculation requires overcoming closed-loop circuit friction (minimum 1.0 bar head)
+    # 3. Recirculation Pump P-201 Head & Shaft Power (using user-entered efficiencies & target pressure)
     g = 9.80665
-    dp_circuit = max(pressure_drop_pa, 1.0e5)
+    dp_target_boost = max(0.0, recirc_target_pressure_pa - recirc_suction_pressure_pa) if recirc_target_pressure_pa > 0.0 else 0.0
+    dp_friction_loop = max(pressure_drop_pa, 0.0) + max(return_pressure_drop_pa, 0.0)
+    dp_circuit = max(dp_target_boost + dp_friction_loop, 1.0e5)
     head_m = dp_circuit / (rho_liq * g)
-    p_shaft_kw = (m_recirc_kg_s * (dp_circuit / rho_liq) / (0.70 * 0.90)) / 1000.0
-    recirc_rec = f"P-201 Karadan Gemiye Kriyo Sirkülasyon: {q_recirc_m3_h:.1f} m³/h @ {head_m:.1f} mLC (Motor: ~{p_shaft_kw:.1f} kW)"
+    p_min_shaft_kw = (m_recirc_kg_s * (dp_circuit / rho_liq) / (eta_p_rec * eta_m_rec)) / 1000.0
 
-    # 4. Main Unloading Pumping Requirements (Gemiden Karaya Ana Boşaltım Pompalaması)
+    # User-entered recirculation flow evaluation & checkpoint
+    u_flow_kg_s = m_recirc_kg_s if user_recirc_flow_kg_s is None else max(0.0, float(user_recirc_flow_kg_s))
+    u_flow_m3_h = (u_flow_kg_s / rho_liq) * 3600.0
+    u_pump_power_kw = (u_flow_kg_s * (dp_circuit / rho_liq) / (eta_p_rec * eta_m_rec)) / 1000.0
+    u_delta_t_k = (q_loop_w / (max(u_flow_kg_s, 1e-4) * cp_val)) if u_flow_kg_s > 0 else 999.9
+
+    if user_recirc_flow_kg_s is not None and u_flow_kg_s < (m_recirc_kg_s - 1e-6):
+        deficit_warn = True
+        warn_msg = (
+            f"⚠️ KRİTİK SİRKÜLASYON DEBİSİ UYARISI: Girilen dönüş debisi ({u_flow_kg_s:.2f} kg/s | {u_flow_m3_h:.1f} m³/h), "
+            f"hattı ΔT ≤ {dt_allow:.1f} K sınırında soğuk tutmak için gereken minimum debiden "
+            f"({m_recirc_kg_s:.2f} kg/s | {q_recirc_m3_h:.1f} m³/h) DÜŞÜKTÜR! "
+            f"Mevcut debide hat boyunca ΔT = +{u_delta_t_k:.2f} K ısınma, flaş/kaynama ve termal eğilme (bowing) oluşacaktır."
+        )
+    else:
+        deficit_warn = False
+        warn_msg = (
+            f"✓ Sirkülasyon debisi ({u_flow_kg_s:.2f} kg/s | {u_flow_m3_h:.1f} m³/h), "
+            f"minimum gerekli soğuk tutma debisini ({m_recirc_kg_s:.2f} kg/s | {q_recirc_m3_h:.1f} m³/h) karşılamaktadır "
+            f"(Gerçekleşen ΔT = +{u_delta_t_k:.2f} K ≤ {dt_allow:.1f} K)."
+        )
+
+    recirc_rec = (
+        f"P-201 Min. Gerekli Güç: {p_min_shaft_kw:.1f} kW ({q_recirc_m3_h:.1f} m³/h @ {head_m:.1f} mLC) | "
+        f"Seçilen Debide Güç: {u_pump_power_kw:.1f} kW ({u_flow_m3_h:.1f} m³/h)"
+    )
+
+    # 4. Onshore Storage Tank Heat Ingress & Total Terminal BOG Budget
+    tank_mass_kg = max(0.0, tank_volume_m3) * rho_liq
+    tank_bog_kg_h = (tank_mass_kg * (max(0.0, tank_bor_pct_day) / 100.0)) / 24.0 if tank_mass_kg > 0 else 0.0
+    tank_heat_w = (tank_bog_kg_h / 3600.0) * h_fg
+    active_p_kw = u_pump_power_kw if user_recirc_flow_kg_s is not None else p_min_shaft_kw
+    pump_heat_w = active_p_kw * eta_m_rec * 1000.0
+    tot_term_bog_kg_h = tank_bog_kg_h + ((q_loop_w + pump_heat_w) / h_fg) * 3600.0
+    tot_term_bog_nm3_h = tot_term_bog_kg_h / rho_norm
+
+    # 5. Main Unloading Pumping Requirements (Gemiden Karaya Ana Boşaltım Pompalaması)
     q_unload_m3_h = (main_mass_flow_kg_s / rho_liq) * 3600.0 if main_mass_flow_kg_s > 0 else 0.0
     dp_unload_total = max(pressure_drop_pa, 0.0) * (1.0 + fitting_loss_factor) + tank_backpressure_pa
     head_unload_m = dp_unload_total / (rho_liq * g) if rho_liq > 0 else 0.0
-    # Combined cryogenic pump & drive efficiency (~69%: 75% hydraulic, 92% electric motor)
-    p_unload_kw = (main_mass_flow_kg_s * (dp_unload_total / rho_liq) / (0.75 * 0.92)) / 1000.0 if main_mass_flow_kg_s > 0 else 0.0
+    p_unload_kw = (main_mass_flow_kg_s * (dp_unload_total / rho_liq) / (eta_p_unl * eta_m_unl)) / 1000.0 if main_mass_flow_kg_s > 0 else 0.0
 
     if q_unload_m3_h > 2500.0:
         n_pumps = 4
@@ -93,7 +161,7 @@ def evaluate_terminal_operations(
         unload_rec = "Ana boşaltım akışı tanımlı değil (Standby modu)."
 
     return TerminalOperatingMetrics(
-        total_heat_ingress_w=total_heat_w,
+        total_heat_ingress_w=q_loop_w,
         bog_rate_kg_h=bog_kg_h,
         bog_rate_nm3_h=bog_nm3_h,
         boil_off_rate_pct_day=bor_pct_day,
@@ -101,11 +169,23 @@ def evaluate_terminal_operations(
         recirc_min_flow_m3_h=q_recirc_m3_h,
         recirc_velocity_m_s=v_recirc,
         recirc_pump_head_m=head_m,
-        recirc_pump_power_kw=p_shaft_kw,
+        recirc_pump_power_kw=p_min_shaft_kw,
         stratification_risk=stratification_risk,
         unloading_flow_m3_h=q_unload_m3_h,
         unloading_pump_head_m=head_unload_m,
         unloading_pump_power_kw=p_unload_kw,
         unloading_pump_recommendation=unload_rec,
-        recirc_pump_recommendation=recirc_rec
+        recirc_pump_recommendation=recirc_rec,
+        recirc_min_pump_power_kw=p_min_shaft_kw,
+        user_recirc_flow_kg_s=u_flow_kg_s,
+        user_recirc_flow_m3_h=u_flow_m3_h,
+        user_recirc_pump_power_kw=u_pump_power_kw,
+        user_recirc_delta_t_k=u_delta_t_k,
+        recirc_flow_deficit_warning=deficit_warn,
+        recirc_flow_warning_msg=warn_msg,
+        tank_heat_ingress_w=tank_heat_w,
+        tank_bog_rate_kg_h=tank_bog_kg_h,
+        pump_heat_to_lng_w=pump_heat_w,
+        total_terminal_bog_kg_h=tot_term_bog_kg_h,
+        total_terminal_bog_nm3_h=tot_term_bog_nm3_h,
     )
