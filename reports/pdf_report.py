@@ -2,10 +2,14 @@
 
 import io
 import math
-from typing import Dict, Any
+import os
+from typing import Dict, Any, Tuple
+from xml.sax.saxutils import escape as _xml_escape
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
 from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, HRFlowable
 from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults, is_3d_results
@@ -19,6 +23,44 @@ from core.mechanics import (
 from core.units import from_si, delta_from_si, unit_display_label, delta_unit_display_label
 
 
+def _register_unicode_fonts() -> Tuple[str, str]:
+    """Register Unicode TTF fonts (Turkish & math symbols) with safe fallback to Helvetica."""
+    candidates = [
+        (
+            "/System/Library/Fonts/Supplemental/Arial.ttf",
+            "/System/Library/Fonts/Supplemental/Arial Bold.ttf",
+            "LNGUnicodeSans",
+        ),
+        (
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+            "LNGDejaVuSans",
+        ),
+    ]
+    for reg_path, bold_path, family_name in candidates:
+        if os.path.exists(reg_path):
+            bold_name = f"{family_name}-Bold"
+            try:
+                if family_name not in pdfmetrics.getRegisteredFontNames():
+                    pdfmetrics.registerFont(TTFont(family_name, reg_path))
+                if os.path.exists(bold_path):
+                    if bold_name not in pdfmetrics.getRegisteredFontNames():
+                        pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+                else:
+                    bold_name = family_name
+                pdfmetrics.registerFontFamily(
+                    family_name,
+                    normal=family_name,
+                    bold=bold_name,
+                    italic=family_name,
+                    boldItalic=bold_name,
+                )
+                return family_name, bold_name
+            except Exception:
+                continue
+    return "Helvetica", "Helvetica-Bold"
+
+
 def generate_pdf_report(
     results,
     project_info: Dict[str, Any],
@@ -26,6 +68,10 @@ def generate_pdf_report(
     press_unit: str = "bar (abs)",
     cell_data: list = None,
     terminal_ops=None,
+    asme_mech: dict | None = None,
+    omega_mech: dict | None = None,
+    surge_mech: dict | None = None,
+    valve_closure_time_s: float = 15.0,
 ) -> bytes:
     """Generates an executive engineering calculation sheet in PDF format."""
     buffer = io.BytesIO()
@@ -44,8 +90,8 @@ def generate_pdf_report(
         outlet_p_pa = results.pressure_pa[-1]
         outlet_psat_pa = results.wall_vapor_pressure_pa[-1]
         inlet_psat_pa = results.wall_vapor_pressure_pa[0]
-        flashed = results.has_wall_flashed
-        flash_point_m = results.wall_flashing_point_m or 0.0
+        flashed = results.has_wall_flashed or results.has_bulk_flashed
+        flash_point_m = results.wall_flashing_point_m if results.wall_flashing_point_m is not None else (results.bulk_flashing_point_m or 0.0)
         rho_in = results.density_kg_m3[0] if (hasattr(results, "density_kg_m3") and len(results.density_kg_m3) > 0) else 425.0
         rho_out = results.density_kg_m3[-1] if (hasattr(results, "density_kg_m3") and len(results.density_kg_m3) > 0) else 425.0
         flow_area = math.pi * ((cfg.inner_diameter_m / 2.0) ** 2)
@@ -77,11 +123,12 @@ def generate_pdf_report(
     delta_psat_d = delta_from_si("pressure", outlet_psat_pa - inlet_psat_pa, press_unit)
     heat_kw = results.total_heat_ingress_w / 1000.0
 
+    font_regular, font_bold = _register_unicode_fonts()
     styles = getSampleStyleSheet()
     title_style = ParagraphStyle(
         "DocTitle",
         parent=styles["Heading1"],
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         fontSize=18,
         leading=22,
         textColor=colors.HexColor("#0f2a4a"),
@@ -90,7 +137,7 @@ def generate_pdf_report(
     subtitle_style = ParagraphStyle(
         "DocSubtitle",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=font_regular,
         fontSize=10,
         textColor=colors.HexColor("#555555"),
         spaceAfter=12
@@ -98,7 +145,7 @@ def generate_pdf_report(
     section_style = ParagraphStyle(
         "SectionHeader",
         parent=styles["Heading2"],
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         fontSize=12,
         leading=16,
         textColor=colors.HexColor("#0f2a4a"),
@@ -108,7 +155,7 @@ def generate_pdf_report(
     body_style = ParagraphStyle(
         "BodyDark",
         parent=styles["Normal"],
-        fontName="Helvetica",
+        fontName=font_regular,
         fontSize=9,
         leading=12,
         textColor=colors.HexColor("#222222")
@@ -116,19 +163,35 @@ def generate_pdf_report(
     bold_style = ParagraphStyle(
         "BodyBold",
         parent=styles["Normal"],
-        fontName="Helvetica-Bold",
+        fontName=font_bold,
         fontSize=9,
         leading=12,
         textColor=colors.HexColor("#0f2a4a")
     )
+    cell_header_style = ParagraphStyle(
+        "CellHeader",
+        parent=styles["Normal"],
+        fontName=font_bold,
+        fontSize=6.5,
+        leading=8,
+        textColor=colors.white,
+    )
+    cell_body_style = ParagraphStyle(
+        "CellBody",
+        parent=styles["Normal"],
+        fontName=font_regular,
+        fontSize=6.5,
+        leading=8,
+        textColor=colors.HexColor("#222222"),
+    )
 
     story = []
 
-    # Title & Metadata
-    proj_name = project_info.get("project_name", "LNG Pipeline Flow Simulation")
-    tag_id = project_info.get("tag_id", "LNG-PL-001")
-    engineer = project_info.get("engineer_name", "Kıdemli Proses Mühendisi")
-    date_str = project_info.get("date_str", "2026-11-06")
+    # Title & Metadata (XML-escaped for ReportLab Paragraph safety)
+    proj_name = _xml_escape(str(project_info.get("project_name", "LNG Pipeline Flow Simulation")))
+    tag_id = _xml_escape(str(project_info.get("tag_id", "LNG-PL-001")))
+    engineer = _xml_escape(str(project_info.get("engineer_name", "Kıdemli Proses Mühendisi")))
+    date_str = _xml_escape(str(project_info.get("date_str", "2026-11-06")))
 
     story.append(Paragraph(f"<b>{proj_name}</b>", title_style))
     story.append(Paragraph(f"Ekipman Etiketi: {tag_id} | Mühendis: {engineer} | Tarih: {date_str}", subtitle_style))
@@ -201,15 +264,20 @@ def generate_pdf_report(
     v_status = "UYGUN" if (0.5 <= v_out <= 4.5) else "UYARI"
     v_msg = f"Akış hızı ({v_out:.2f} m/s) tavsiye edilen 0.5 - 4.5 m/s aralığındadır (Tabakalaşma ve elektrostatik riskleri önler)." if v_status == "UYGUN" else f"Akış hızı ({v_out:.2f} m/s) tavsiye edilen aralığın dışındadır."
 
-    # NPSH / Flashing margin: at least 0.5 bar
+    # NPSH / Flashing margin: at least 0.5 bar (displayed in selected unit)
     margin_bar = results.min_flashing_margin_pa / 1e5
+    margin_threshold_d = delta_from_si("pressure", 0.5e5, press_unit)
     m_status = "UYGUN" if margin_bar >= 0.5 else ("DİKKAT" if margin_bar > 0.0 else "KRİTİK")
-    m_msg = f"Minimum güvenlik marjı ({margin_bar:.2f} bar) ≥ 0.5 bar tavsiyesini karşılamaktadır." if m_status == "UYGUN" else f"Güvenlik marjı ({margin_bar:.2f} bar) düşüktür veya kaynama başlamıştır."
+    m_msg = (
+        f"Minimum güvenlik marjı ({margin_d:.2f} {dp_lbl}) ≥ {margin_threshold_d:.2f} {dp_lbl} tavsiyesini karşılamaktadır."
+        if m_status == "UYGUN"
+        else f"Güvenlik marjı ({margin_d:.2f} {dp_lbl}) düşüktür veya kaynama başlamıştır."
+    )
 
     checks_data = [
         [Paragraph("Kontrol Parametresi", bold_style), Paragraph("Standart / Tavsiye", bold_style), Paragraph("Değerlendirme", bold_style), Paragraph("Sonuç", bold_style)],
         [Paragraph("Akış Hızı Sınırı", body_style), Paragraph("0.5 - 4.5 m/s (EN 1473)", body_style), Paragraph(v_msg, body_style), Paragraph(f"<b>{v_status}</b>", body_style)],
-        [Paragraph("Kavitasyon / Flaş Marjı", body_style), Paragraph("P - Psat ≥ 0.5 bar", body_style), Paragraph(m_msg, body_style), Paragraph(f"<b>{m_status}</b>", body_style)],
+        [Paragraph("Kavitasyon / Flaş Marjı", body_style), Paragraph(f"P - Psat ≥ {margin_threshold_d:.2f} {dp_lbl}", body_style), Paragraph(m_msg, body_style), Paragraph(f"<b>{m_status}</b>", body_style)],
         [Paragraph("Faz Değişimi Riski", body_style), Paragraph("Buharlaşma = 0 (Tek Faz)", body_style), Paragraph("Çıkışa kadar tam sıvı faz sağlanmalıdır." if not flashed else "Boru içinde 2 fazlı buhar kabarcıkları oluşmuştur.", body_style), Paragraph("<b>UYGUN</b>" if not flashed else "<b>KAYNAMA</b>", body_style)]
     ]
     checks_table = Table(checks_data, colWidths=[110, 110, 230, 70])
@@ -239,18 +307,26 @@ def generate_pdf_report(
         main_mass_flow_kg_s=cfg.mass_flow_rate_kg_s
     )
 
-    d_out_eval = cfg.inner_diameter_m + 0.012  # Nominal pipe outer diameter estimation
-    spec_eval = PipelineSpecification(
-        outer_diameter_m=d_out_eval,
-        design_pressure_pa=max(cfg.inlet_pressure_pa * 1.5, 2.0e6),
-        operating_pressure_pa=cfg.inlet_pressure_pa,
-        pipeline_length_m=cfg.length_m,
-        fluid_density_kg_m3=rho_eval
-    )
-    asme_eval = calculate_asme_b31_3_thickness(spec_eval)
-    omega_eval = calculate_thermal_contraction_and_omega_loop(spec_eval, anchor_distance_m=min(cfg.length_m, 200.0), outer_diameter_m=d_out_eval)
-    surge_eval = calculate_joukowsky_surge(spec_eval, v_in, valve_closure_time_s=15.0, wall_thickness_m=0.006)
+    if asme_mech is None or omega_mech is None or surge_mech is None:
+        d_out_eval = cfg.inner_diameter_m + 0.012  # Fallback when called standalone without UI spec
+        spec_eval = PipelineSpecification(
+            outer_diameter_m=d_out_eval,
+            design_pressure_pa=max(cfg.inlet_pressure_pa * 1.5, 2.0e6),
+            operating_pressure_pa=cfg.inlet_pressure_pa,
+            pipeline_length_m=cfg.length_m,
+            fluid_density_kg_m3=rho_eval
+        )
+        asme_eval = asme_mech if asme_mech is not None else calculate_asme_b31_3_thickness(spec_eval)
+        omega_eval = omega_mech if omega_mech is not None else calculate_thermal_contraction_and_omega_loop(spec_eval, anchor_distance_m=min(cfg.length_m, 200.0), outer_diameter_m=d_out_eval)
+        surge_eval = surge_mech if surge_mech is not None else calculate_joukowsky_surge(spec_eval, v_in, valve_closure_time_s=valve_closure_time_s, wall_thickness_m=0.006)
+    else:
+        asme_eval = asme_mech
+        omega_eval = omega_mech
+        surge_eval = surge_mech
 
+    p_hydro_d = from_si("pressure", asme_eval["hydrostatic_test_pressure_bar"] * 1e5, press_unit)
+    surge_actual_d = delta_from_si("pressure", surge_eval["actual_surge_bar"] * 1e5, press_unit)
+    p_peak_d = from_si("pressure", surge_eval["peak_line_pressure_bar"] * 1e5, press_unit)
     recirc_status_str = "DÜŞÜK DEBİ UYARISI" if t_ops.recirc_flow_deficit_warning else "UYGUN"
     terminal_data = [
         [Paragraph("Statik Hat BOG Üretim Hızı", bold_style), Paragraph(f"{t_ops.bog_rate_kg_h:.1f} kg/saat ({t_ops.bog_rate_nm3_h:.1f} Nm³/saat)", body_style),
@@ -258,9 +334,11 @@ def generate_pdf_report(
         [Paragraph("Seçilen Sirkülasyon Debisi & Gücü", bold_style), Paragraph(f"{t_ops.user_recirc_flow_m3_h:.1f} m³/saat | Güç: {t_ops.user_recirc_pump_power_kw:.2f} kW ({recirc_status_str})", body_style),
          Paragraph("Kara Tankı & Toplam Terminal BOG", bold_style), Paragraph(f"Tank: {t_ops.tank_bog_rate_kg_h:.1f} kg/saat ({t_ops.tank_heat_ingress_w/1000.0:.1f} kW)<br/>Toplam BOG: {t_ops.total_terminal_bog_kg_h:.1f} kg/saat ({t_ops.total_terminal_bog_nm3_h:.0f} Nm³/saat)", body_style)],
         [Paragraph("Gemiden Karaya Boşaltım Pompalaması", bold_style), Paragraph(f"{t_ops.unloading_flow_m3_h:.1f} m³/saat | TDH: {t_ops.unloading_pump_head_m:.1f} mLC", body_style),
-         Paragraph("Kargo Pompası Motor Gücü & Öneri", bold_style), Paragraph(f"Toplam {t_ops.unloading_pump_power_kw:.1f} kW<br/>{t_ops.unloading_pump_recommendation}", body_style)],
-        [Paragraph("Hat Isıl Büzülme Miktarı (ΔL)", bold_style), Paragraph(f"{omega_eval['contraction_rate_mm_per_m']:.2f} mm/m ({omega_eval['total_line_contraction_m']:.2f} m/km)", body_style),
-         Paragraph("ESDV Kapanma Koç Darbesi (15s)", bold_style), Paragraph(f"+{surge_eval['actual_surge_bar']:.2f} bar (P_peak: {surge_eval['peak_line_pressure_bar']:.1f} bar)", body_style)]
+         Paragraph("Kargo Pompası Motor Gücü & Öneri", bold_style), Paragraph(f"Toplam {t_ops.unloading_pump_power_kw:.1f} kW<br/>{_xml_escape(t_ops.unloading_pump_recommendation)}", body_style)],
+        [Paragraph("ASME B31.3 Min. Et Kalınlığı & Hidrotest", bold_style), Paragraph(f"t_req: {asme_eval['t_required_min_mm']:.2f} mm (Nom: {asme_eval['t_nominal_recommended_mm']:.2f} mm)<br/>P_test: {p_hydro_d:.2f} {p_lbl}", body_style),
+         Paragraph("Hat Isıl Büzülme & Omega Ayak Boyu", bold_style), Paragraph(f"{omega_eval['contraction_rate_mm_per_m']:.2f} mm/m (Toplam: {omega_eval['total_line_contraction_m']:.2f} m)<br/>Min. Omega H: {omega_eval['min_omega_loop_leg_height_m']:.2f} m", body_style)],
+        [Paragraph(f"ESDV Kapanma Koç Darbesi ({valve_closure_time_s:.1f} s)", bold_style), Paragraph(f"+{surge_actual_d:.2f} {dp_lbl} (P_peak: {p_peak_d:.2f} {p_lbl})", body_style),
+         Paragraph("Önerilen Min. ESDV Kapanma Süresi", bold_style), Paragraph(f"{surge_eval['recommended_min_valve_closure_s']} s ({_xml_escape(str(surge_eval['closure_regime']))})", body_style)],
     ]
     terminal_table = Table(terminal_data, colWidths=[130, 130, 130, 130])
     terminal_table.setStyle(TableStyle([
@@ -315,14 +393,21 @@ def generate_pdf_report(
     story.append(Spacer(1, 10))
 
     # 5. Dilim Bazlı Veriler (Özet)
-    if cell_data:
+    if cell_data and len(cell_data[0]) > 0:
         story.append(Paragraph("5. Dilim Bazlı Veriler (Özet)", section_style))
-        cell_table = Table(cell_data, colWidths=[130, 130, 130, 130])
+        ncols = len(cell_data[0])
+        col_w = 520.0 / ncols
+        wrapped_rows = []
+        for r_idx, row in enumerate(cell_data):
+            st_use = cell_header_style if r_idx == 0 else cell_body_style
+            wrapped_rows.append([Paragraph(_xml_escape(str(c)), st_use) for c in row])
+        cell_table = Table(wrapped_rows, colWidths=[col_w] * ncols, repeatRows=1)
         cell_table.setStyle(TableStyle([
             ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#0f2a4a")),
             ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
             ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#dee2e6")),
-            ("PADDING", (0, 0), (-1, -1), 4),
+            ("PADDING", (0, 0), (-1, -1), 3),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ]))
         story.append(cell_table)
         story.append(Spacer(1, 15))

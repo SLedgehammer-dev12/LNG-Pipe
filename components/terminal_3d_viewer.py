@@ -359,7 +359,7 @@ def generate_terminal_3d_html(
     scene.background = new THREE.Color(0x0a0f18);
     scene.fog = new THREE.FogExp2(0x0a0f18, 0.0007);
 
-    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.5, 3000);
+    const camera = new THREE.PerspectiveCamera(45, container.clientWidth / Math.max(1, container.clientHeight), 0.5, 3000);
     camera.position.set(-180, 110, 240);
 
     const renderer = new THREE.WebGLRenderer({{ antialias: true, alpha: false }});
@@ -377,7 +377,7 @@ def generate_terminal_3d_html(
     controls.target.set(60, 10, 0);
 
     // Day/Night theme colors for sea & sky
-    const theme = "{theme}";
+    const theme = {json.dumps(theme)};
     const isNight = theme === "Gece";
     const ambientIntensity = isNight ? 0.25 : 0.6;
     const fogColor = isNight ? new THREE.Color(0x050a14) : new THREE.Color(0x1a2b3c);
@@ -747,6 +747,7 @@ def generate_terminal_3d_html(
         // Concrete shoulder / curb base
         const curb = new THREE.Mesh(new THREE.BoxGeometry(width + 1.4, 0.14, len + 1.4), curbMat);
         curb.position.set(cx, roadY - 0.04, cz);
+        curb.rotation.y = angle;
         curb.receiveShadow = true;
         terminalGroup.add(curb);
 
@@ -2048,7 +2049,9 @@ def generate_terminal_3d_html(
         pts.push(new THREE.Vector3(x0 + OMEGA_W, 14, zOffset + loopExtZ));
         pts.push(new THREE.Vector3(x0 + OMEGA_W, 14, zOffset));
       }});
-      pts.push(new THREE.Vector3(ROUTE_END - 20, 14, zOffset));
+      if (pts[pts.length - 1].x < ROUTE_END - 20.0) {{
+        pts.push(new THREE.Vector3(ROUTE_END - 20, 14, zOffset));
+      }}
       pts.push(new THREE.Vector3(ROUTE_END, 14, zOffset));
       return pts;
     }}
@@ -2553,7 +2556,8 @@ def generate_terminal_3d_html(
       const isReturn = hit.object.userData.lineType === "return";
       const st = isReturn ? retStations : mainStations;
       const frac = hit.uv ? Math.min(1, Math.max(0, hit.uv.x)) : 0.5;
-      const idx = Math.round(frac * (st.distance_m.length - 1));
+      const effFrac = isReturn ? (1.0 - frac) : frac;
+      const idx = Math.round(effFrac * (st.distance_m.length - 1));
       const lineLabel = isReturn ? "Dönüş Hattı" : "Ana LNG Hattı";
       document.getElementById('pick-body').innerHTML =
         '<div class="hud-row"><span>Hat:</span><span class="hud-val">' + lineLabel + '</span></div>' +
@@ -2649,9 +2653,10 @@ def generate_terminal_3d_html(
 
     // Responsive resize handler
     window.addEventListener('resize', () => {{
-      camera.aspect = container.clientWidth / container.clientHeight;
+      const h = Math.max(1, container.clientHeight);
+      camera.aspect = container.clientWidth / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setSize(container.clientWidth, h);
     }});
 
     // Animation Loop
@@ -2659,7 +2664,7 @@ def generate_terminal_3d_html(
 
     function animate() {{
       requestAnimationFrame(animate);
-      const delta = clock.getDelta();
+      const delta = Math.min(clock.getDelta(), 0.1);
       const time = clock.getElapsedTime();
 
       // Animate calm sea waves via shader uniform
@@ -2667,16 +2672,14 @@ def generate_terminal_3d_html(
 
       // Update flow particles along main curve (Forward flow: Ship -> Tank)
       mainParticles.forEach(p => {{
-        p.userData.t += delta * 0.12;
-        if (p.userData.t > 1.0) p.userData.t = 0.0;
+        p.userData.t = ((p.userData.t + delta * 0.12) % 1.0 + 1.0) % 1.0;
         const pos = mainCurve.getPoint(p.userData.t);
         p.position.copy(pos);
       }});
 
       // Update recirc particles along recirc curve (Reverse flow: Tank -> Jetty)
       recircParticles.forEach(p => {{
-        p.userData.t -= delta * 0.10;
-        if (p.userData.t < 0.0) p.userData.t = 1.0;
+        p.userData.t = ((p.userData.t - delta * 0.10) % 1.0 + 1.0) % 1.0;
         const pos = recircCurve.getPoint(p.userData.t);
         p.position.copy(pos);
       }});
@@ -2684,8 +2687,7 @@ def generate_terminal_3d_html(
       // Update BOG vapor particles flowing to BOG Compressor & Recondenser Station
       if (bogParticleCurve) {{
         bogParticles.forEach(p => {{
-          p.userData.t += delta * 0.14;
-          if (p.userData.t > 1.0) p.userData.t = 0.0;
+          p.userData.t = ((p.userData.t + delta * 0.14) % 1.0 + 1.0) % 1.0;
           p.position.copy(bogParticleCurve.getPoint(p.userData.t));
         }});
       }}
@@ -2693,8 +2695,7 @@ def generate_terminal_3d_html(
       // Update Flare gas particles flowing through KO Drum V-401 and up the 84m Flare Stack F-401
       if (flareParticleCurve) {{
         flareParticles.forEach(p => {{
-          p.userData.t += delta * 0.16;
-          if (p.userData.t > 1.0) p.userData.t = 0.0;
+          p.userData.t = ((p.userData.t + delta * 0.16) % 1.0 + 1.0) % 1.0;
           p.position.copy(flareParticleCurve.getPoint(p.userData.t));
         }});
       }}

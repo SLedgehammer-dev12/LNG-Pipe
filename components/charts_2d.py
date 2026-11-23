@@ -111,9 +111,9 @@ def create_pressure_comparison_chart(results: Union[PipelineSimulationResults, S
 def create_temperature_profile_chart(results: Union[PipelineSimulationResults, Simulation3DResults], temp_unit: str = "°C") -> go.Figure:
     """Plots Bulk LNG temperature, center core, and wall temperatures."""
     x = results.distance_m
-    t_offset = 273.15 if temp_unit == "C" else 0.0
-    t_unit_str = "°C" if temp_unit == "C" else "K"
-    t_unit_label = temp_unit
+    norm_unit = "°C" if temp_unit in ("C", "°C") else temp_unit
+    t_unit_str = norm_unit
+    t_unit_label = norm_unit
 
     fig = go.Figure()
 
@@ -232,7 +232,7 @@ def create_flashing_margin_chart(results: Union[PipelineSimulationResults, Simul
     return _apply_theme(fig)
 
 
-def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1, temp_unit: str = "C") -> go.Figure:
+def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1, temp_unit: str = "°C") -> go.Figure:
     """
     Renders 2D cross-sectional contour heatmap T(r, theta) of the pipe cross section at slice_index.
     Reveals the cryogenic core and warm thermal boundary layer at the pipe inner wall.
@@ -242,14 +242,9 @@ def create_radial_cross_section_heatmap(results_3d, slice_index: int = -1, temp_
     
     r_coords = results_3d.radial_coords_m * 1000.0  # mm
     theta_coords = results_3d.azimuthal_coords_rad
-    temp_grid = results_3d.temp_field_k[idx, :, :]  # K
-    
-    # Convert to display unit
-    if temp_unit == "C":
-        temp_grid = temp_grid - 273.15
-        t_unit_str = "°C"
-    else:
-        t_unit_str = "K"
+    norm_unit = "°C" if temp_unit in ("C", "°C") else temp_unit
+    temp_grid = from_si("temperature", results_3d.temp_field_k[idx, :, :], norm_unit)
+    t_unit_str = norm_unit
     
     # Create polar contour plot
     # Interpolate into regular 2D Cartesian grid (x, y) for smooth contour

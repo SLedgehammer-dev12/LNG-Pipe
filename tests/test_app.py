@@ -79,3 +79,33 @@ def test_recirculation_flow_checkpoint_warning_in_ui():
     at.run()
     assert not at.exception, at.exception[0].value if at.exception else "unknown error"
     assert any("KRİTİK SİRKÜLASYON DEBİSİ UYARISI" in err.value for err in at.error)
+
+
+def test_preset_applies_insulation_layer_and_json_stays_canonical():
+    import json
+
+    at = _run_app()
+    at.sidebar.selectbox[0].set_value("Vakum Ceketli Transfer Hattı (DN150, 200m, 6 bar)")
+    at.run()
+    assert not at.exception, at.exception[0].value if at.exception else "unknown error"
+    layers = at.session_state["insulation_layers"]
+    assert len(layers) == 1
+    assert "Vakum Ceketli MLI" in layers[0]["name"]
+    assert layers[0]["thickness_mm"] == 25.0
+
+    # Switch temperature & pressure units to °F / psi and verify UI unit conversion
+    for s in at.sidebar.selectbox:
+        if s.label == "Giriş Sıcaklığı T_in birimi":
+            s.set_value("°F")
+        elif s.label == "Giriş Toplam Basıncı P_in birimi":
+            s.set_value("psi")
+    at.run()
+    assert not at.exception, at.exception[0].value if at.exception else "unknown error"
+    # Verify JSON export uses canonical °C / bar values and captures report metadata
+    payload = at.session_state["_last_json_export"]
+    assert payload["display_units"]["temperature"] == "°F"
+    assert payload["display_units"]["pressure"] == "psi (abs)"
+    assert payload["project"]["name"] == "LNG Cryogenic Pipeline Hydraulic & Thermal Study"
+    assert -170.0 < payload["results"]["outlet_temperature_c"] < -140.0
+    assert 1.0 < payload["results"]["outlet_pressure_bar"] < 15.0
+

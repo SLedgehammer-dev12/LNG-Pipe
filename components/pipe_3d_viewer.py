@@ -212,7 +212,7 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
 
     <div class="controls-panel">
       <button class="ctrl-btn active" id="btn-cutaway" onclick="toggleCutaway()">180° Kesit</button>
-      <button class="ctrl-btn" id="btn-particles" onclick="toggleParticles()">Akış Parçacıkları</button>
+      <button class="ctrl-btn active" id="btn-particles" onclick="toggleParticles()">Akış Parçacıkları</button>
       <button class="ctrl-btn" onclick="resetView()">Bakışı Sıfırla</button>
     </div>
   </div>
@@ -228,7 +228,7 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
     function init() {{
       const container = document.getElementById('canvas-container');
       const width = container.clientWidth;
-      const height = container.clientHeight;
+      const height = Math.max(1, container.clientHeight);
 
       scene = new THREE.Scene();
       scene.background = new THREE.Color(0x0e1117);
@@ -307,7 +307,7 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
         reflectivity: 0.9
       }});
       fluidMesh = new THREE.Mesh(fluidGeo, fluidMat);
-      fluidMesh.rotation.z = Math.PI / 2;
+      fluidMesh.rotation.z = -Math.PI / 2;
       pipeGroup.add(fluidMesh);
 
       // 2. Metal Pipe Wall (semi-transparent cutaway)
@@ -376,6 +376,7 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
       }});
 
       particles = new THREE.Points(particleGeo, particleMat);
+      particles.visible = showParticles;
       pipeGroup.add(particles);
     }}
 
@@ -384,7 +385,16 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
       const btn = document.getElementById('btn-cutaway');
       btn.innerText = isCutaway ? "180° Kesit" : "Tam Kapalı Boru";
       btn.classList.toggle('active', isCutaway);
-      scene.remove(pipeGroup);
+      if (pipeGroup) {{
+        pipeGroup.traverse(obj => {{
+          if (obj.geometry) obj.geometry.dispose();
+          if (obj.material) {{
+            if (Array.isArray(obj.material)) obj.material.forEach(m => m.dispose());
+            else obj.material.dispose();
+          }}
+        }});
+        scene.remove(pipeGroup);
+      }}
       buildPipeline();
       initParticles();
     }}
@@ -403,9 +413,10 @@ def generate_3d_pipe_html(results, height_px: int = 560, temp_unit: str = "°C",
 
     function onWindowResize() {{
       const container = document.getElementById('canvas-container');
-      camera.aspect = container.clientWidth / container.clientHeight;
+      const h = Math.max(1, container.clientHeight);
+      camera.aspect = container.clientWidth / h;
       camera.updateProjectionMatrix();
-      renderer.setSize(container.clientWidth, container.clientHeight);
+      renderer.setSize(container.clientWidth, h);
     }}
 
     function animate() {{

@@ -188,6 +188,17 @@ MULTI_LAYER_PACKAGES = {
     ]
 }
 
+
+def _match_insulation_catalog_key(ins_type: str) -> str:
+    """Resolve short preset insulation labels to canonical INSULATION_MATERIALS_CATALOG keys."""
+    if ins_type in INSULATION_MATERIALS_CATALOG:
+        return ins_type
+    token = ins_type.split("(")[0].strip().lower()
+    for cat_key in INSULATION_MATERIALS_CATALOG:
+        if token and token in cat_key.lower():
+            return cat_key
+    return "PIR Köpük (Poliizosiyanürat)"
+
 LNG_PRESET_COMPOSITIONS = {
     "Saf Metan (%100 CH4)": {"Methane": 100.0},
     "Standart Ticari LNG (Katar/Cezayir)": {"Methane": 94.2, "Ethane": 4.5, "Propane": 0.8, "Nitrogen": 0.5},
@@ -227,12 +238,19 @@ is_3d_mode = "3D" in solver_mode
 selected_preset_name = st.sidebar.selectbox("Hızlı Senaryo Seçimi", list(PRESETS.keys()))
 preset = PRESETS[selected_preset_name]
 
-# Reset stored SI values when the preset changes so widget defaults follow the preset.
+# Reset stored SI values and insulation layers when the preset changes so widget defaults follow the preset.
 if st.session_state.get("_last_preset") != selected_preset_name:
     st.session_state["_last_preset"] = selected_preset_name
     st.session_state["_preset_token"] = st.session_state.get("_preset_token", 0) + 1
-    for _k in [k for k in st.session_state if k.startswith("si_")]:
+    for _k in [k for k in st.session_state if k.startswith(("si_", "layer_mat_", "layer_th_", "layer_k_"))]:
         del st.session_state[_k]
+    if preset is not None and "ins_type" in preset and "ins_thick_mm" in preset:
+        _matched_ins = _match_insulation_catalog_key(preset["ins_type"])
+        st.session_state["insulation_layers"] = [{
+            "name": _matched_ins,
+            "thickness_mm": float(preset["ins_thick_mm"]),
+            "k": INSULATION_MATERIALS_CATALOG[_matched_ins]["k"],
+        }]
 preset_token = st.session_state.get("_preset_token", 0)
 
 
@@ -251,16 +269,21 @@ def unit_input(label, category, key, default_si, min_si=None, max_si=None, step_
         )
     si_prev = st.session_state.get(f"si_{key}", default_si)
     kwargs = {}
+    val_disp = round(from_si(category, si_prev, unit), 6)
     if min_si is not None:
-        kwargs["min_value"] = round(from_si(category, min_si, unit), 6)
+        min_disp = round(from_si(category, min_si, unit), 6)
+        kwargs["min_value"] = min_disp
+        val_disp = max(min_disp, val_disp)
     if max_si is not None:
-        kwargs["max_value"] = round(from_si(category, max_si, unit), 6)
+        max_disp = round(from_si(category, max_si, unit), 6)
+        kwargs["max_value"] = max_disp
+        val_disp = min(max_disp, val_disp)
     if step_si is not None:
         kwargs["step"] = round(delta_from_si(category, abs(step_si), unit), 6)
     with c_val:
         disp = st.number_input(
             label,
-            value=round(from_si(category, si_prev, unit), 6),
+            value=val_disp,
             key=f"num_{key}_{unit}_{preset_token}",
             **kwargs,
         )
@@ -1146,12 +1169,23 @@ with tab_table:
         mime="text/csv"
     )
 
-    # JSON dışa aktarma - tüm sonuçları yapılandırılmış biçimde
+    # JSON dışa aktarma - kanonik SI/mühendislik birimleri (°C, bar abs) + aktif gösterim birimleri
+    st.session_state.setdefault("proj_name_input", "LNG Cryogenic Pipeline Hydraulic & Thermal Study")
+    st.session_state.setdefault("tag_id_input", "LNG-01-PL-4022")
+    st.session_state.setdefault("engineer_input", "Kıdemli Proses & Kriyojenik Mühendisi")
+    st.session_state.setdefault("report_date", "2026-11-06")
+
     json_export = {
         "project": {
-            "name": proj_name_input if 'proj_name_input' in dir() else "LNG Pipeline Study",
-            "tag_id": tag_id_input if 'tag_id_input' in dir() else "LNG-PL-001",
-            "date": report_date if 'report_date' in dir() else "2026-11-06"
+            "name": st.session_state["proj_name_input"],
+            "tag_id": st.session_state["tag_id_input"],
+            "engineer": st.session_state["engineer_input"],
+            "date": st.session_state["report_date"],
+        },
+        "display_units": {
+            "temperature": t_unit,
+            "pressure": unit_display_label("pressure", p_unit),
+            "mass_flow": flow_unit,
         },
         "simulation": {
             "mode": "3D" if is_3d_mode else "1D",
@@ -1161,23 +1195,24 @@ with tab_table:
             "inlet_temperature_c": round(inlet_t_c, 2),
             "inlet_pressure_bar": round(inlet_p_bar, 3),
             "mass_flow_kg_s": mass_flow_kg_s,
-            "ambient_temperature_c": amb_temp_c,
+            "ambient_temperature_c": round(amb_temp_c, 2),
             "wind_speed_m_s": wind_speed_m_s,
             "fluid": "pure_methane" if is_pure_methane else "mixture",
             "composition": active_composition
         },
         "results": {
-            "outlet_temperature_c": round(outlet_t_d, 2),
-            "outlet_pressure_bar": round(outlet_p_d, 3),
-            "outlet_psat_bar": round(outlet_psat_d, 3),
-            "pressure_drop_bar": round(delta_p_d, 3),
-            "min_flashing_margin_bar": round(min_margin_d, 3),
-            "total_heat_ingress_kw": heat_kw,
+            "outlet_temperature_c": round(outlet_t_k - 273.15, 2),
+            "outlet_pressure_bar": round(outlet_p_pa / 1e5, 3),
+            "outlet_psat_bar": round(outlet_psat_pa / 1e5, 3),
+            "pressure_drop_bar": round(delta_p_pa / 1e5, 3),
+            "min_flashing_margin_bar": round(min_margin_pa / 1e5, 3),
+            "total_heat_ingress_kw": round(heat_kw, 3),
             "has_flashed": has_flashed,
             "flashing_point_m": sim_results.flashing_point_m if hasattr(sim_results, 'flashing_point_m') else (sim_results.wall_flashing_point_m if hasattr(sim_results, 'wall_flashing_point_m') else None)
         },
         "cells": df_data
     }
+    st.session_state["_last_json_export"] = json_export
     json_bytes = json.dumps(json_export, indent=2, ensure_ascii=False).encode('utf-8')
     st.download_button(
         label="📥 Sonuçları JSON Olarak İndir",
@@ -1191,11 +1226,11 @@ with tab_report:
     
     col_rep_1, col_rep_2 = st.columns(2)
     with col_rep_1:
-        proj_name_input = st.text_input("Proje Adı", value="LNG Cryogenic Pipeline Hydraulic & Thermal Study")
-        tag_id_input = st.text_input("Hat / Ekipman Etiketi (Tag ID)", value="LNG-01-PL-4022")
+        proj_name_input = st.text_input("Proje Adı", key="proj_name_input")
+        tag_id_input = st.text_input("Hat / Ekipman Etiketi (Tag ID)", key="tag_id_input")
     with col_rep_2:
-        engineer_input = st.text_input("Hazırlayan Mühendis", value="Kıdemli Proses & Kriyojenik Mühendisi")
-        report_date = st.text_input("Tarih", value="2026-11-06")
+        engineer_input = st.text_input("Hazırlayan Mühendis", key="engineer_input")
+        report_date = st.text_input("Tarih", key="report_date")
 
     st.markdown("###### 🔍 Standartlar Uygunluk Özeti (ASME B31.3 & EN 1473)")
     rho_flow = sim_results.density_kg_m3[0] if (hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0) else 425.0
@@ -1227,9 +1262,20 @@ with tab_report:
             row = []
             for h in headers:
                 v = df_data[h][r]
-                row.append(str(v) if isinstance(v, float) else str(v))
+                row.append(str(v))
             pdf_cell_data.append(row)
-    pdf_bytes = generate_pdf_report(sim_results, meta_dict, temp_unit=t_unit, press_unit=p_unit, cell_data=pdf_cell_data, terminal_ops=terminal_ops)
+    pdf_bytes = generate_pdf_report(
+        sim_results,
+        meta_dict,
+        temp_unit=t_unit,
+        press_unit=p_unit,
+        cell_data=pdf_cell_data,
+        terminal_ops=terminal_ops,
+        asme_mech=asme_mech,
+        omega_mech=omega_mech,
+        surge_mech=surge_mech,
+        valve_closure_time_s=valve_closure_time_s,
+    )
     st.download_button(
         label="📄 Resmi PDF Mühendislik Hesaplama Raporunu İndir",
         data=pdf_bytes,

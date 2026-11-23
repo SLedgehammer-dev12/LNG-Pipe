@@ -3,7 +3,7 @@
 import json
 from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults, is_3d_results
-from core.units import from_si
+from core.units import from_si, unit_display_label
 
 
 def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | None = None, anchor_dist_m: float = 180.0, temp_unit: str = "°C", press_unit: str = "bar") -> str:
@@ -14,8 +14,8 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
         t_out_k = results.bulk_temperature_k[-1]
         p_out_pa = results.pressure_pa[-1]
         psat_out_pa = results.wall_vapor_pressure_pa[-1]
-        flashed = results.has_wall_flashed
-        flash_m = results.wall_flashing_point_m or 0.0
+        flashed = results.has_wall_flashed or results.has_bulk_flashed
+        flash_m = results.wall_flashing_point_m or results.bulk_flashing_point_m or 0.0
     else:
         cfg = results.config
         t_out_k = results.outlet_temperature_k
@@ -24,6 +24,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
         flashed = results.has_flashed
         flash_m = results.flashing_point_m or 0.0
 
+    p_lbl = unit_display_label("pressure", press_unit)
     t_in_k = cfg.inlet_temperature_k
     p_in_pa = cfg.inlet_pressure_pa
     t_in = from_si("temperature", t_in_k, temp_unit)
@@ -31,6 +32,18 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
     p_in = from_si("pressure", p_in_pa, press_unit)
     p_out = from_si("pressure", p_out_pa, press_unit)
     psat_out = from_si("pressure", psat_out_pa, press_unit)
+    t_apd = from_si("temperature", t_in_k + 0.3, temp_unit)
+    p_apd = from_si("pressure", p_in_pa - 0.1e5, press_unit)
+    t_esdv201 = from_si("temperature", t_out_k - 0.2, temp_unit)
+    p_esdv201 = from_si("pressure", p_out_pa + 0.1e5, press_unit)
+    t_recirc = from_si("temperature", 111.15, temp_unit)
+    p_recirc = from_si("pressure", 6.5e5, press_unit)
+    t_bog_comp = from_si("temperature", 128.15, temp_unit)
+    p_bog_in = from_si("pressure", 1.08e5, press_unit)
+    p_bog_out = from_si("pressure", 8.5e5, press_unit)
+    t_flare_lo = from_si("temperature", 123.15, temp_unit)
+    t_flare_hi = from_si("temperature", 1123.15, temp_unit)
+    p_flare = from_si("pressure", 1.05e5, press_unit)
     inlet_t_c = t_in
     inlet_p_bar = p_in
     m_flow = cfg.mass_flow_rate_kg_s
@@ -57,7 +70,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
             f"L {x1:.1f} 180", f"L {x1:.1f} 270",
         ])
         omega_groups.append(f"""
-      <g class="node-group" onclick="showInfo('Omega-{k+1} Dolfeni (Expansion Loop)', 'Kriyojenik büzülmeyi sönümleyen {k+1}. Omega genleşme döngüsü. Hat soğuduğunda esneyerek gerilimi azaltır.', '{t_om:.1f} {temp_unit}', '{p_om:.2f} {press_unit}', 'Ω-Loop {k+1}')">
+      <g class="node-group" onclick="showInfo('Omega-{k+1} Dolfeni (Expansion Loop)', 'Kriyojenik büzülmeyi sönümleyen {k+1}. Omega genleşme döngüsü. Hat soğuduğunda esneyerek gerilimi azaltır.', '{t_om:.1f} {temp_unit}', '{p_om:.2f} {p_lbl}', 'Ω-Loop {k+1}')">
         <rect x="{x0-10:.1f}" y="160" width="{omega_w+20:.1f}" height="180" fill="#161b22" stroke="#d29922" stroke-width="1.5" stroke-dasharray="4,2" rx="4" />
         <circle cx="{cx:.1f}" cy="172" r="5" fill="#da3633" />
         <text x="{x0-5:.1f}" y="152" fill="#d29922" font-size="10" font-weight="700">OMEGA-{k+1} DOLFENİ</text>
@@ -67,7 +80,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
     for k in range(omega_count + 1):
         ax = omega_span_start + slot * k
         apd_groups.append(f"""
-      <g class="node-group" onclick="showInfo('APD-{k+1} Dolfeni', 'Yaklaşım köprüsü taşıyıcı dolfeni. Kriyojenik boru köprüsünü taşır.', '{t_in + 0.3:.1f} {temp_unit}', '{p_in - 0.1:.2f} {press_unit}', 'Kazık Çapı: 1200 mm')">
+      <g class="node-group" onclick="showInfo('APD-{k+1} Dolfeni', 'Yaklaşım köprüsü taşıyıcı dolfeni. Kriyojenik boru köprüsünü taşır.', '{t_apd:.1f} {temp_unit}', '{p_apd:.2f} {p_lbl}', 'Kazık Çapı: 1200 mm')">
         <rect x="{ax-15:.1f}" y="250" width="30" height="85" fill="#21262d" stroke="#8b949e" stroke-width="1.5" rx="3" />
         <circle cx="{ax:.1f}" cy="310" r="4" fill="#30363d" />
         <text x="{ax-22:.1f}" y="352" fill="#8b949e" font-size="9" font-weight="600">APD-{k+1}</text>
@@ -79,7 +92,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
         fx, ft, fp = omega_labels[0]
         omega_label_html = (
             f'<rect x="{fx-45:.1f}" y="240" width="95" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#d29922" />\n'
-            f'      <text x="{fx-40:.1f}" y="253" fill="#d29922" font-size="9" font-weight="700">Ω-1: {fp:.1f}{press_unit} | {ft:.1f}{temp_unit}</text>'
+            f'      <text x="{fx-40:.1f}" y="253" fill="#d29922" font-size="9" font-weight="700">Ω-1: {fp:.1f}{p_lbl} | {ft:.1f}{temp_unit}</text>'
         )
     else:
         omega_label_html = ""
@@ -244,7 +257,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       <rect x="180" y="260" width="650" height="14" fill="#21262d" rx="3" stroke="#30363d" />
 
       <!-- ================= 1. LNG GEMİSİ (CARRIER) ================= -->
-      <g class="node-group" onclick="showInfo('LNG Gemisi (Carrier)', 'Kriyojenik membran kargo tanklarına sahip LNG taşıyıcı gemi. -161.5 °C sıcaklıkta ve 1.05-1.25 bar basınçta yük taşır.', '{inlet_t_c:.1f} °C', '{inlet_p_bar:.2f} bar', 'Debi: {m_flow:.1f} kg/s')">
+      <g class="node-group" onclick="showInfo('LNG Gemisi (Carrier)', 'Kriyojenik membran kargo tanklarına sahip LNG taşıyıcı gemi. -161.5 °C sıcaklıkta ve 1.05-1.25 bar basınçta yük taşır.', '{inlet_t_c:.1f} {temp_unit}', '{inlet_p_bar:.2f} {p_lbl}', 'Debi: {m_flow:.1f} kg/s')">
         <!-- Ship Hull -->
         <path d="M 20 200 L 130 200 L 145 270 L 120 330 L 20 330 Z" fill="#161b22" stroke="#58a6ff" stroke-width="2" />
         <!-- Ship Cargo Tanks (Spherical/Membrane style) -->
@@ -256,7 +269,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       </g>
 
       <!-- ================= 2. LUP DOLFENİ (LOADING/UNLOADING PLATFORM) ================= -->
-      <g class="node-group" onclick="showInfo('LUP Dolfeni (Loading Platform)', 'Yükleme/Tahliye platformu. Deniz tipi yükleme kolları (Marine Loading Arms), acil ayırma kuplörleri (PERC) ve ESDV-101 vanasını barındırır.', '{inlet_t_c:.1f} °C', '{inlet_p_bar:.2f} bar', 'Platform Ebat: 25x30m')">
+      <g class="node-group" onclick="showInfo('LUP Dolfeni (Loading Platform)', 'Yükleme/Tahliye platformu. Deniz tipi yükleme kolları (Marine Loading Arms), acil ayırma kuplörleri (PERC) ve ESDV-101 vanasını barındırır.', '{inlet_t_c:.1f} {temp_unit}', '{inlet_p_bar:.2f} {p_lbl}', 'Platform Ebat: 25x30m')">
         <!-- Platform foundation -->
         <rect x="160" y="190" width="80" height="150" fill="#1c2128" stroke="#f0883e" stroke-width="2" rx="4" />
         <!-- Marine Loading Arm (MLA) representation -->
@@ -272,7 +285,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       {omega_and_apd_html}
 
       <!-- Shore Isolation Valve Station (ESDV-201) -->
-      <g class="node-group" onclick="showInfo('Kara Sınırı İzolasyon İstasyonu', 'Deniz ile karayı ayıran acil durum kapatma vanası (ESDV-201) ve izolasyon flanşı.', '{t_out - 0.2:.1f} °C', '{p_out + 0.1:.2f} bar', 'ESDV-201')">
+      <g class="node-group" onclick="showInfo('Kara Sınırı İzolasyon İstasyonu', 'Deniz ile karayı ayıran acil durum kapatma vanası (ESDV-201) ve izolasyon flanşı.', '{t_esdv201:.1f} {temp_unit}', '{p_esdv201:.2f} {p_lbl}', 'ESDV-201')">
         <rect x="795" y="245" width="40" height="50" fill="#21262d" stroke="#3fb950" stroke-width="1.5" rx="3" />
         <polygon points="803,266 813,272 803,278" fill="#f85149" />
         <polygon points="823,266 813,272 823,278" fill="#f85149" />
@@ -280,7 +293,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       </g>
 
       <!-- ================= 6. KARA LNG TANKI ================= -->
-      <g class="node-group" onclick="showInfo('Kara LNG Depolama Tankı', 'Tam kısıtlamalı (Full-Containment) çift cidarlı kriyojenik depolama tankı. 160.000 m³ hacim, -162 °C ve 1.04 bar tasarım basıncı.', '{t_out:.1f} °C', '{p_out:.2f} bar', 'Hacim: 160.000 m³')">
+      <g class="node-group" onclick="showInfo('Kara LNG Depolama Tankı', 'Tam kısıtlamalı (Full-Containment) çift cidarlı kriyojenik depolama tankı. 160.000 m³ hacim, -162 °C ve 1.04 bar tasarım basıncı.', '{t_out:.1f} {temp_unit}', '{p_out:.2f} {p_lbl}', 'Hacim: 160.000 m³')">
         <!-- Outer Concrete Wall -->
         <rect x="940" y="160" width="160" height="220" fill="#1c2128" stroke="#58a6ff" stroke-width="2.5" rx="8" />
         <!-- Inner 9% Ni Steel Tank -->
@@ -293,7 +306,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       </g>
 
       <!-- ================= 7. SİRKÜLASYON POMPASI ================= -->
-      <g class="node-group" onclick="showInfo('Kriyojenik Sirkülasyon Pompası (P-201)', 'Tank içindeki soğuk LNG sıvısını alıp iskeleye geri basan sirkülasyon pompası. Gemi olmadığı bekleme durumunda borunun soğuk kalmasını (Cold Standby) sağlar.', '-162.0 °C', '6.5 bar', 'Debi: 20-40 m³/h')">
+      <g class="node-group" onclick="showInfo('Kriyojenik Sirkülasyon Pompası (P-201)', 'Tank içindeki soğuk LNG sıvısını alıp iskeleye geri basan sirkülasyon pompası. Gemi olmadığı bekleme durumunda borunun soğuk kalmasını (Cold Standby) sağlar.', '{t_recirc:.1f} {temp_unit}', '{p_recirc:.2f} {p_lbl}', 'Debi: 20-40 m³/h')">
         <!-- Pump Circle -->
         <circle cx="890" cy="400" r="18" fill="#238636" stroke="#39d353" stroke-width="2" />
         <!-- Pump Impeller triangle -->
@@ -332,7 +345,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       <text x="480" y="108" fill="#38bdf8" font-size="9" font-weight="600">BOG Buhar Hattı (Vapor Return &amp; BOG Collector Header)</text>
 
       <!-- 4. BOG COMPRESSOR (K-301) & FLARE KO DRUM (V-401) & FLARE LINE -> FLARE STACK (F-401) -->
-      <g class="node-group" onclick="showInfo('BOG Kompresör &amp; Recondenser (K-301 / V-301)', 'Tanklarda ve boru devresinde oluşan kaynama gazını (BOG) toplayıp sıkıştıran ve yeniden sıvılaştırıcıya (recondenser) veya yüksek basınçta şebekeye/flare hattına ileten ünite.', '-145.0 °C', '1.08 -> 8.5 bar', 'K-301A/B + V-301')">
+      <g class="node-group" onclick="showInfo('BOG Kompresör &amp; Recondenser (K-301 / V-301)', 'Tanklarda ve boru devresinde oluşan kaynama gazını (BOG) toplayıp sıkıştıran ve yeniden sıvılaştırıcıya (recondenser) veya yüksek basınçta şebekeye/flare hattına ileten ünite.', '{t_bog_comp:.1f} {temp_unit}', '{p_bog_in:.2f} -> {p_bog_out:.2f} {p_lbl}', 'K-301A/B + V-301')">
         <rect x="855" y="54" width="60" height="34" fill="#1c2128" stroke="#38bdf8" stroke-width="1.8" rx="4" />
         <text x="862" y="70" fill="#38bdf8" font-size="9" font-weight="700">BOG KOMP.</text>
         <text x="865" y="82" fill="#8b949e" font-size="8">K-301 / V-301</text>
@@ -351,7 +364,7 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       <text x="935" y="55" fill="#f97316" font-size="8.5" font-weight="700">Flare Tahliye Hattı</text>
 
       <!-- Flare Stack F-401 & KO Drum V-401 -->
-      <g class="node-group" onclick="showInfo('Flare Hattı, KO Drum (V-401) &amp; Flare Bacası (F-401)', 'Acil durum aşırı basınç tahliyesi (PRV) ve kapasite fazlası BOG gazını sıvı ayırıcı tamburdan (V-401 Knock-Out Drum) geçirerek 84 m yüksekliğindeki kule destekli Flare bacasında (F-401) güvenli şekilde yakan sistem.', '-150 .. +850 °C', '1.05 bar (abs)', 'Baca Yüksekliği: 84 m | F-401')">
+      <g class="node-group" onclick="showInfo('Flare Hattı, KO Drum (V-401) &amp; Flare Bacası (F-401)', 'Acil durum aşırı basınç tahliyesi (PRV) ve kapasite fazlası BOG gazını sıvı ayırıcı tamburdan (V-401 Knock-Out Drum) geçirerek 84 m yüksekliğindeki kule destekli Flare bacasında (F-401) güvenli şekilde yakan sistem.', '{t_flare_lo:.0f} .. {t_flare_hi:.0f} {temp_unit}', '{p_flare:.2f} {p_lbl}', 'Baca Yüksekliği: 84 m | F-401')">
         <!-- KO Drum V-401 -->
         <rect x="1068" y="56" width="26" height="22" fill="#21262d" stroke="#f97316" stroke-width="1.6" rx="6" />
         <text x="1070" y="70" fill="#f97316" font-size="7.5" font-weight="700">V-401</text>
@@ -367,13 +380,13 @@ def generate_schematic_2d_html(results, height_px: int = 620, length_m: float | 
       </g>
 
       <!-- Live telemetry labels on pipe -->
-      <rect x="220" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#58a6ff" />
-      <text x="225" y="253" fill="#58a6ff" font-size="9" font-weight="700">GİRİŞ: {p_in:.1f}{press_unit} | {t_in:.1f}{temp_unit}</text>
+      <rect x="220" y="240" width="105" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#58a6ff" />
+      <text x="225" y="253" fill="#58a6ff" font-size="9" font-weight="700">GİRİŞ: {p_in:.1f}{p_lbl} | {t_in:.1f}{temp_unit}</text>
 
       {omega_label_html}
 
-      <rect x="850" y="240" width="85" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#3fb950" />
-      <text x="855" y="253" fill="#3fb950" font-size="9" font-weight="700">ÇIKIŞ: {p_out:.1f}{press_unit} | {t_out:.1f}{temp_unit}</text>
+      <rect x="850" y="240" width="105" height="18" fill="rgba(14,17,23,0.85)" rx="3" stroke="#3fb950" />
+      <text x="855" y="253" fill="#3fb950" font-size="9" font-weight="700">ÇIKIŞ: {p_out:.1f}{p_lbl} | {t_out:.1f}{temp_unit}</text>
     </svg>
 
     <!-- Interactive Inspector Box -->

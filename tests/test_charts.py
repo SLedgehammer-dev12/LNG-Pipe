@@ -44,3 +44,16 @@ def test_charts_creation_returns_valid_plotly_figures():
     
     fig_heatmap = create_radial_cross_section_heatmap(results_3d, slice_index=10)
     assert fig_heatmap is not None
+
+    # Verify temperature unit conversion & labels in both 2D profile and 3D radial heatmap
+    import numpy as np
+    for unit_lbl, expected_range in [("°C", (-200.0, -100.0)), ("°F", (-300.0, -200.0)), ("K", (80.0, 150.0))]:
+        fig_prof = create_temperature_profile_chart(results_3d, temp_unit=unit_lbl)
+        assert unit_lbl in fig_prof.layout.yaxis.title.text
+        assert unit_lbl in fig_prof.data[0].hovertemplate
+
+        fig_hm = create_radial_cross_section_heatmap(results_3d, slice_index=-1, temp_unit=unit_lbl)
+        assert unit_lbl in fig_hm.data[0].colorbar.title.text
+        finite_z = fig_hm.data[0].z[~np.isnan(fig_hm.data[0].z)]
+        assert expected_range[0] <= float(np.nanmean(finite_z)) <= expected_range[1]
+
