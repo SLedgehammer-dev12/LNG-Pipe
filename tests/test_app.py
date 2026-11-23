@@ -4,11 +4,14 @@ Guards against NameError / attribute-mismatch regressions across 1D and 3D
 simulation branches. See app.py:426 fix (t_in_c -> inlet_t_c).
 """
 
+from pathlib import Path
 from streamlit.testing.v1 import AppTest
+
+APP_PATH = Path(__file__).resolve().parent.parent / "app.py"
 
 
 def _run_app():
-    return AppTest.from_file("app.py", default_timeout=180).run()
+    return AppTest.from_file(str(APP_PATH), default_timeout=180).run()
 
 
 def test_default_3d_runs_without_exception():

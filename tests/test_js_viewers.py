@@ -62,6 +62,7 @@ def test_embedded_js_passes_node_syntax_check(is_3d, theme, flashing):
                 [node_bin, "--check", "-"],
                 input=js,
                 text=True,
+                encoding="utf-8",
                 capture_output=True,
                 check=False,
             )
