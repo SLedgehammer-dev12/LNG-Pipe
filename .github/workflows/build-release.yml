@@ -26,7 +26,7 @@ jobs:
           pip install -r requirements-build.txt pytest
 
       - name: Run test suite
-        run: pytest tests/ -q
+        run: python -m pytest tests/ -q
 
       - name: Build macOS arm64 .app and .dmg
         run: bash packaging/build_macos_dmg.sh
@@ -59,7 +59,7 @@ jobs:
 
       - name: Run test suite
         shell: pwsh
-        run: pytest tests/ -q
+        run: python -m pytest tests/ -q
 
       - name: Ensure Inno Setup 6 is installed
         shell: pwsh
