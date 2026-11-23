@@ -53,14 +53,46 @@ def test_b1_gas_density_not_floored_at_300():
     assert props.thermal_conductivity < 0.05
 
 
-def test_b3_non_finite_coolprop_falls_back():
-    # B3: non-finite CoolProp output must fall back cleanly (no crash, finite props)
+def test_b3_non_finite_coolprop_falls_back(monkeypatch):
+    # B3: non-finite CoolProp output must trigger fallback cleanly (no crash, finite props)
     fm = FluidManager(fluid_type="pure_methane")
-    props = fm.get_properties(111.66, 101325.0)
+    fm._cache.clear()
+    monkeypatch.setattr(fm, "_methane_state", None)
+    import CoolProp.CoolProp as CP
+    monkeypatch.setattr(CP, "PropsSI", lambda *args, **kwargs: float("nan"))
+    props = fm.get_properties(115.0, 200000.0)
+    assert fm.fallback_used is True
     assert all(
         __import__("math").isfinite(v)
         for v in (props.density, props.specific_heat, props.viscosity, props.thermal_conductivity, props.enthalpy)
     )
+    # Enthalpy fallback should reflect T difference relative to 111.66 K (not frozen at 0.0)
+    assert props.enthalpy > 0.0
+
+
+def test_single_component_non_methane_and_thread_safety_and_n2_volatility():
+    import concurrent.futures
+
+    # Single-component Ethane must use HEOS Ethane directly (rho ~ 635 kg/m³ at 112 K, NOT ~422 kg/m³ methane)
+    fm_c2 = FluidManager(fluid_type="mixture", composition={"Ethane": 1.0})
+    props_c2 = fm_c2.get_properties(112.0, 500000.0)
+    assert props_c2.density > 580.0
+
+    # N2-rich heavy mixture fallback vapor pressure must reflect N2 volatility (~14.5 factor vs pure methane)
+    fm_ch4 = FluidManager(fluid_type="pure_methane")
+    fm_n2_heavy = FluidManager(
+        fluid_type="mixture",
+        composition={"Methane": 0.90, "Ethane": 0.04, "Propane": 0.02, "n-Butane": 0.01, "Nitrogen": 0.03},
+    )
+    assert fm_n2_heavy.get_vapor_pressure(112.0) > fm_ch4.get_vapor_pressure(112.0) * 1.25
+
+    # Thread-safety check across concurrent get_properties calls with uncached temperatures
+    fm_shared = FluidManager(fluid_type="mixture", composition={"Methane": 0.94, "Ethane": 0.045, "Propane": 0.01, "Nitrogen": 0.005})
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        futures = [ex.submit(fm_shared.get_properties, 110.0 + (i % 20) * 0.35, 3e5 + i * 5000.0) for i in range(60)]
+        results = [f.result() for f in futures]
+    assert len(results) == 60
+    assert all(400.0 < r.density < 500.0 for r in results)
 
 
 def test_b10_npsh_margin_positive_in_liquid():

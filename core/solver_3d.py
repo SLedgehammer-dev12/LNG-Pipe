@@ -170,12 +170,16 @@ class PipelineSolver3D:
         nt = self.config.n_azimuthal
         nz = self.config.n_axial
 
-        # Guard against zero or negative mass flow (static / standby / outage mode)
+        # Guard against invalid grid / geometry / flow inputs
         if pipe_cfg.mass_flow_rate_kg_s <= 0.0:
             raise ValueError(
                 f"mass_flow_rate_kg_s must be > 0 (got {pipe_cfg.mass_flow_rate_kg_s}); "
                 "use 1D solver or set a small positive flow for standby."
             )
+        if pipe_cfg.length_m <= 0.0 or pipe_cfg.inner_diameter_m <= 0.0:
+            raise ValueError("length_m and inner_diameter_m must be > 0")
+        if nz < 1 or nr < 2 or nt < 1:
+            raise ValueError("Grid dimensions must satisfy n_axial >= 1, n_radial >= 2, n_azimuthal >= 1")
 
         # Methane triple point pressure (11.696 kPa) — pressure floor for both solvers
         P_TRIPLE_PA = 11696.0
@@ -187,9 +191,9 @@ class PipelineSolver3D:
         sin_incline = math.sin(math.radians(pipe_cfg.inclination_deg))
 
         # 1. Radial discretization
-        # Quadratic clustering toward wall to capture boundary layer
+        # Wall-clustered grid: finest spacing near r = r_max to resolve thermal boundary layer
         eta = np.linspace(0.0, 1.0, nr + 1)
-        r_faces = r_max * (eta ** 1.3)
+        r_faces = r_max * (1.0 - (1.0 - eta) ** 1.5)
         r_centers = 0.5 * (r_faces[:-1] + r_faces[1:])
         dr = r_faces[1:] - r_faces[:-1]
         theta_centers = np.linspace(0.5 * d_theta, 2.0 * math.pi - 0.5 * d_theta, nt)
@@ -224,21 +228,29 @@ class PipelineSolver3D:
             u_profile *= scale_fac
             ring_mass_flows = inlet_props.density * u_profile * ring_areas
 
-        # 3. Turbulent thermal conductivity k_eff(r)
+        # 3. Turbulent thermal conductivity k_eff(r): zero eddy diffusivity in laminar flow, Van Driest damped Prandtl mixing in turbulent flow
         rel_roughness = pipe_cfg.roughness_m / pipe_cfg.inner_diameter_m
         f_darcy = calculate_churchill_friction_factor(re_inlet, rel_roughness)
         tau_w = 0.125 * f_darcy * inlet_props.density * (v_mean ** 2)
         u_tau = math.sqrt(max(1e-6, tau_w / inlet_props.density))
+        nu_inlet = max(inlet_props.viscosity / inlet_props.density, 1e-8)
 
         k_eff_profile = np.zeros(nr)
-        pr_t = 0.85
-        for i in range(nr):
-            y = max(1e-4, r_max - r_centers[i])
-            l_mix = 0.07 * r_max * (1.0 - (r_centers[i] / r_max) ** 2)
-            eps_m = (l_mix ** 2) * abs(u_tau / y)
-            eps_h = eps_m / pr_t
-            k_turb = inlet_props.density * inlet_props.specific_heat * eps_h
-            k_eff_profile[i] = inlet_props.thermal_conductivity + k_turb
+        if re_inlet <= 2300.0:
+            k_eff_profile[:] = inlet_props.thermal_conductivity
+        else:
+            pr_t = 0.85
+            kappa = 0.41
+            for i in range(nr):
+                y = max(1e-5, r_max - r_centers[i])
+                y_plus = (y * u_tau) / nu_inlet
+                d_vd = 1.0 - math.exp(-y_plus / 26.0)
+                l_mix = min(kappa * y * d_vd, 0.09 * r_max)
+                du_dy = u_tau / max(kappa * y, 1e-6)
+                eps_m = (l_mix ** 2) * du_dy
+                eps_h = eps_m / pr_t
+                k_turb = inlet_props.density * inlet_props.specific_heat * eps_h
+                k_eff_profile[i] = inlet_props.thermal_conductivity + k_turb
 
         # Conductances between radial rings (W/K)
         # G_in[i] is between i and i-1 at face r_faces[i]
@@ -258,7 +270,9 @@ class PipelineSolver3D:
         temp_field[0, :, :] = pipe_cfg.inlet_temperature_k
 
         curr_p = pipe_cfg.inlet_pressure_pa
+        curr_h = inlet_props.enthalpy
         total_heat_ingress = 0.0
+        molar_mass_kg = self.fm.mixture_molar_mass_g_mol() * 1e-3
 
         results = Simulation3DResults(
             config=self.config,
@@ -272,10 +286,11 @@ class PipelineSolver3D:
             results.pressure_pa.append(curr_p)
 
             slice_t = temp_field[k_idx, :, :]
+            radial_t_mean = np.mean(slice_t, axis=1)
             # Cup-mixing bulk temperature
-            t_bulk = float(np.sum(ring_mass_flows * np.mean(slice_t, axis=1)) / np.sum(ring_mass_flows))
-            t_center = float(np.mean(slice_t[0, :]))
-            t_wall = float(np.mean(slice_t[-1, :]))
+            t_bulk = float(np.sum(ring_mass_flows * radial_t_mean) / np.sum(ring_mass_flows))
+            t_center = float(radial_t_mean[0])
+            t_wall = float(radial_t_mean[-1])
 
             props_station = self.fm.get_properties(t_bulk, curr_p)
             p_sat_bulk = props_station.vapor_pressure
@@ -283,8 +298,6 @@ class PipelineSolver3D:
 
             margin_bulk = curr_p - p_sat_bulk
             margin_wall = curr_p - p_sat_wall
-
-            results.density_kg_m3.append(props_station.density)
 
             results.bulk_temperature_k.append(t_bulk)
             results.center_temperature_k.append(t_center)
@@ -302,27 +315,36 @@ class PipelineSolver3D:
                 results.has_wall_flashed = True
                 results.wall_flashing_point_m = round(curr_x, 2)
 
+            vapor_quality = 0.0
+            liq_density = props_station.density
+            liq_viscosity = props_station.viscosity
+            flow_density = liq_density
             if margin_wall <= 0.0:
-                h_fg = self.fm.get_latent_heat(curr_p)
+                h_fg = max(self.fm.get_latent_heat(curr_p), 1e4)
                 t_sat, _ = self.fm.get_bubble_dew_temperature(curr_p)
-                delta_t_superheat = max(0.0, t_wall - t_sat)
-                props_bulk = props_station
-                vapor_quality = min(0.99, (props_bulk.specific_heat * delta_t_superheat) / max(h_fg, 1e4))
-                # Saturated vapor density via ideal-gas estimate for Lockhart-Martinelli
-                # (CoolProp call per flashing cell is expensive; ideal gas is accurate
-                # enough for cryogenic vapor at these pressures.)
-                rho_v = max(0.1, 0.01604 * curr_p / (8.314 * max(t_wall, 100.0)))
+                h_liq = self.fm.get_saturated_liquid_enthalpy(curr_p)
+                if liq_density < 100.0:
+                    liq_props = self.fm.get_properties(max(90.7, t_sat - 0.1), curr_p)
+                    liq_density = liq_props.density
+                    liq_viscosity = liq_props.viscosity
+                # First Law quality: bulk enthalpy excess above h_f(P) + local wall-superheat fraction when only boundary layer flashes
+                x_bulk = max(0.0, (curr_h - h_liq) / h_fg)
+                wall_excess_h = float(np.sum(ring_mass_flows * np.maximum(0.0, radial_t_mean - t_sat))) * props_station.specific_heat / max(float(np.sum(ring_mass_flows)), 1e-6)
+                vapor_quality = min(0.99, max(x_bulk, wall_excess_h / h_fg))
+                rho_v = max(0.05, molar_mass_kg * curr_p / (8.314 * max(t_sat, 90.7)))
                 alpha, phi_l_sq, two_phase_rho = calculate_two_phase_flashing(
                     vapor_quality=vapor_quality,
-                    liquid_density=props_bulk.density,
+                    liquid_density=liq_density,
                     vapor_density=rho_v,
-                    liquid_viscosity=props_bulk.viscosity,
+                    liquid_viscosity=liq_viscosity,
                     vapor_viscosity=8.0e-6
                 )
+                flow_density = two_phase_rho
             else:
                 alpha = 0.0
                 phi_l_sq = 1.0
 
+            results.density_kg_m3.append(flow_density)
             results.void_fraction.append(alpha)
             results.two_phase_multiplier.append(phi_l_sq)
 
@@ -330,43 +352,45 @@ class PipelineSolver3D:
                 props = props_station
                 q_prime_total, _ = self.thermal_model.calculate_heat_ingress(props, pipe_cfg.mass_flow_rate_kg_s)
                 total_heat_ingress += q_prime_total * dz
+                curr_h += (q_prime_total * dz) / pipe_cfg.mass_flow_rate_kg_s - g * sin_incline * dz
 
-                # Solve implicit radial conduction for each azimuthal sector j
-                # Sector mass capacity C[i] = (ring_mass_flows[i] / nt) * cp
-                q_sector_wall = (q_prime_total * dz) / nt
+                # Solve implicit axisymmetric radial conduction once per axial slice and broadcast across theta
                 c_cap = (ring_mass_flows / nt) * props.specific_heat
-
                 g_in_sec = g_in / nt
                 g_out_sec = g_out / nt
 
-                # Build TDMA tridiagonal matrices (hoisted outside sector loop)
-                sub_diag = -g_in_sec[1:]
-                main_diag = np.zeros(nr)
-                super_diag = -g_out_sec[:-1]
-
-                for i in range(nr):
-                    main_diag[i] = c_cap[i] + g_in_sec[i] + g_out_sec[i]
-
                 a_mat = np.zeros(nr)
-                a_mat[1:] = sub_diag
-                b_mat = np.copy(main_diag)
+                a_mat[1:] = -g_in_sec[1:]
+                b_mat = c_cap + g_in_sec + g_out_sec
                 c_mat = np.zeros(nr)
-                c_mat[:-1] = super_diag
+                c_mat[:-1] = -g_out_sec[:-1]
 
-                # Advance each sector
-                for j in range(nt):
-                    rhs = c_cap * slice_t[:, j]
-                    rhs[-1] += q_sector_wall  # Wall heat ingress in outer ring
-                    temp_field[k_idx + 1, :, j] = solve_tdma(a_mat, b_mat, c_mat, rhs)
+                rhs = c_cap * radial_t_mean
+                rhs[-1] += (q_prime_total * dz) / nt
+                next_radial_t = solve_tdma(a_mat, b_mat, c_mat, rhs)
 
-                # Hydraulic pressure drop update
-                flow_density = props.density if alpha <= 1e-5 else two_phase_rho
-                v_mean_local = pipe_cfg.mass_flow_rate_kg_s / (flow_density * pipe_area)
-                re_local = (flow_density * v_mean_local * pipe_cfg.inner_diameter_m) / props.viscosity
-                f_local = calculate_churchill_friction_factor(re_local, rel_roughness)
-                dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * flow_density * (v_mean_local ** 2)) * phi_l_sq
+                # Pin flashing cells to T_sat(P) so sensible temperature does not run away past boiling
+                if margin_wall <= 0.0:
+                    next_radial_t = np.minimum(next_radial_t, max(90.7, t_sat))
+                temp_field[k_idx + 1, :, :] = next_radial_t[:, None]
+
+                # Hydraulic pressure drop: liquid-only friction * Phi_L^2 + hydrostatic + momentum acceleration
+                g_total = pipe_cfg.mass_flow_rate_kg_s / pipe_area
+                g_liq = g_total * (1.0 - vapor_quality)
+                if alpha > 1e-5:
+                    re_liq = max((g_liq * pipe_cfg.inner_diameter_m) / liq_viscosity, 1.0)
+                    f_liq = calculate_churchill_friction_factor(re_liq, rel_roughness)
+                    dp_fric = f_liq * (dz / pipe_cfg.inner_diameter_m) * ((g_liq ** 2) / (2.0 * liq_density)) * phi_l_sq
+                else:
+                    v_mean_local = pipe_cfg.mass_flow_rate_kg_s / (flow_density * pipe_area)
+                    re_local = (flow_density * v_mean_local * pipe_cfg.inner_diameter_m) / props.viscosity
+                    f_local = calculate_churchill_friction_factor(re_local, rel_roughness)
+                    dp_fric = f_local * (dz / pipe_cfg.inner_diameter_m) * (0.5 * flow_density * (v_mean_local ** 2))
                 dp_hydro = flow_density * g * sin_incline * dz
-                curr_p = max(P_TRIPLE_PA, curr_p - dp_fric - dp_hydro)
+                dp_accel = 0.0
+                if alpha > 1e-5 and len(results.density_kg_m3) >= 2:
+                    dp_accel = g_total ** 2 * (1.0 / max(results.density_kg_m3[-1], 1e-3) - 1.0 / max(results.density_kg_m3[-2], 1e-3))
+                curr_p = max(P_TRIPLE_PA, curr_p - dp_fric - dp_hydro - dp_accel)
 
         results.temp_field_k = temp_field
         results.total_heat_ingress_w = total_heat_ingress

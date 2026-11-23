@@ -24,7 +24,7 @@ def calculate_two_phase_flashing(
         return 0.0, 1.0, liquid_density
 
     if x >= 0.9999:
-        return 1.0, 200.0, vapor_density
+        return 1.0, 1e5, vapor_density
 
     # Lockhart-Martinelli parameter X_tt (Turbulent Liquid - Turbulent Vapor)
     rho_ratio = max(vapor_density, 0.1) / max(liquid_density, 10.0)
@@ -37,9 +37,9 @@ def calculate_two_phase_flashing(
     alpha = 1.0 / (1.0 + 0.28 * (x_tt ** 0.71))
     alpha = max(0.0, min(0.999, alpha))
 
-    # Chisholm two-phase frictional multiplier Phi_L^2 (C=20)
+    # Chisholm two-phase frictional multiplier Phi_L^2 (C=20); high safety ceiling 1e5 for x -> 1
     phi_l_sq = 1.0 + (20.0 / x_tt) + (1.0 / (x_tt ** 2))
-    phi_l_sq = max(1.0, min(phi_l_sq, 200.0))
+    phi_l_sq = max(1.0, min(phi_l_sq, 1e5))
 
     # Homogeneous / separated mixture density
     two_phase_rho = alpha * vapor_density + (1.0 - alpha) * liquid_density

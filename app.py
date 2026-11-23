@@ -792,11 +792,11 @@ sim_results = run_simulation(
     is_3d_mode, n_radial, n_azimuthal, n_axial
 )
 
-# Return (recirculation) line: 1D solve at the user-configured target pressure for real station data.
+# Return (recirculation) line: 1D solve at the user-configured target pressure and reverse slope (-inclination_deg).
 _ret_eval_flow = return_mass_flow_kg_s if return_mass_flow_kg_s > 0.0 else 5.0
 _ret_eval_results = run_simulation(
     length_m, return_diameter_mm, return_wall_thickness_mm, PIPE_MATERIALS[pipe_mat_name],
-    roughness_um, inclination_deg, is_pure_methane, comp_tuple, inlet_t_c, recirc_target_p_pa / 1e5,
+    roughness_um, -inclination_deg, is_pure_methane, comp_tuple, inlet_t_c, recirc_target_p_pa / 1e5,
     _ret_eval_flow, layers_tuple, amb_temp_c, wind_speed_m_s,
     False, 8, 8, max(20, n_axial)
 )
@@ -933,16 +933,17 @@ with c5:
 
 # --- TERMINAL & MECHANICAL INTEGRITY EVALUATION ---
 fm_eval = get_fluid_manager(is_pure_methane, comp_tuple)
+inlet_props_eval = fm_eval.get_properties(inlet_t_c + 273.15, inlet_p_bar * 1e5)
 
 latent_heat_val = fm_eval.get_latent_heat(sim_results.pressure_pa[-1])
-rho_avg = sim_results.density_kg_m3[0] if hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0 else 425.0
+rho_avg = sim_results.density_kg_m3[0] if hasattr(sim_results, "density_kg_m3") and len(sim_results.density_kg_m3) > 0 else inlet_props_eval.density
 
 terminal_ops = evaluate_terminal_operations(
     total_heat_w=sim_results.total_heat_ingress_w,
     length_m=length_m,
     inner_diam_m=diameter_mm / 1000.0,
     fluid_density=rho_avg,
-    specific_heat=3480.0,
+    specific_heat=inlet_props_eval.specific_heat,
     latent_heat=latent_heat_val,
     delta_t_allowable=allowable_recirc_dt_k,
     pressure_drop_pa=sim_results.total_pressure_drop_pa,
@@ -958,7 +959,11 @@ terminal_ops = evaluate_terminal_operations(
     unload_motor_eff=unload_motor_eff_pct / 100.0,
     tank_volume_m3=tank_volume_m3,
     tank_bor_pct_day=tank_bor_pct_day,
+    molar_mass_g_mol=fm_eval.mixture_molar_mass_g_mol(),
 )
+
+if fm_eval.fallback_used:
+    st.info(f"ℹ️ Çok bileşenli karışım modu: {fm_eval.eos_mode} — doyma/buhar basıncı eğrisi için Raoult/Wagner analitik modeli devrede.")
 
 d_outer_m = (diameter_mm + 2.0 * wall_thickness_mm) / 1000.0
 pipe_spec = spec_from_material(

@@ -152,3 +152,15 @@ def test_b2_two_phase_marching_stays_bounded_at_triple_point():
         assert results.outlet_temperature_k < 115.0
         assert max(results.void_fraction) > 0.0
 
+
+def test_wave3_two_phase_friction_not_double_counted():
+    """Verify two-phase friction at small vapor quality is physical (not 4x-15x inflated by double-counting rho_tp and phi_l_sq)."""
+    fm = FluidManager(fluid_type="pure_methane")
+    tm = PipeThermalModel(inner_diameter_m=0.20, wall_thickness_m=0.008, insulation_layers=[InsulationLayer("Thin", 0.005, 0.05)], ambient_temperature_k=305.0)
+    cfg = PipelineSimulationConfig(length_m=150.0, inner_diameter_m=0.20, inlet_temperature_k=112.8, inlet_pressure_pa=130000.0, mass_flow_rate_kg_s=20.0, num_cells=30)
+    res = PipelineSolver(fm, tm, cfg).solve()
+    assert res.has_flashed is True
+    # Total drop over 150 m at modest 20 kg/s should remain physical (<< 1 bar, not collapsing to triple point)
+    assert res.outlet_pressure_pa > 90000.0
+
+

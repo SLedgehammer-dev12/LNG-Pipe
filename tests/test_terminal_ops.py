@@ -183,3 +183,39 @@ def test_custom_pump_and_motor_efficiencies_and_onshore_tank_bog():
     assert abs(base.tank_bog_rate_kg_h - 1416.67) < 1.0
     assert base.tank_heat_ingress_w > 190000.0  # ~200.7 kW
     assert base.total_terminal_bog_kg_h > base.tank_bog_rate_kg_h + base.bog_rate_kg_h
+
+
+def test_wave3_cooldown_includes_pump_heat_and_zero_flow_returns_inf():
+    import math
+
+    # Zero recirculation flow must return inf delta-T and stratification warning
+    zero_m = evaluate_terminal_operations(
+        total_heat_w=15000.0,
+        length_m=500.0,
+        inner_diam_m=0.20,
+        fluid_density=425.0,
+        specific_heat=3480.0,
+        latent_heat=510000.0,
+        delta_t_allowable=1.5,
+        pressure_drop_pa=1.0e5,
+        user_recirc_flow_kg_s=0.0,
+        recirc_suction_pressure_pa=1.15e5,
+        recirc_target_pressure_pa=5.0e5,
+    )
+    assert math.isinf(zero_m.user_recirc_delta_t_k)
+    assert zero_m.stratification_risk is True
+    assert zero_m.recirc_flow_deficit_warning is True
+
+    # Higher target pressure boost introduces pump shaft heat -> requires higher minimum recirculation flow
+    low_boost = evaluate_terminal_operations(
+        total_heat_w=15000.0, length_m=500.0, inner_diam_m=0.20, fluid_density=425.0,
+        specific_heat=3480.0, latent_heat=510000.0, delta_t_allowable=1.5,
+        recirc_suction_pressure_pa=1.15e5, recirc_target_pressure_pa=2.5e5,
+    )
+    high_boost = evaluate_terminal_operations(
+        total_heat_w=15000.0, length_m=500.0, inner_diam_m=0.20, fluid_density=425.0,
+        specific_heat=3480.0, latent_heat=510000.0, delta_t_allowable=1.5,
+        recirc_suction_pressure_pa=1.15e5, recirc_target_pressure_pa=10.0e5,
+    )
+    assert high_boost.recirc_min_flow_kg_s > low_boost.recirc_min_flow_kg_s
+

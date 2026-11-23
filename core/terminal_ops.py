@@ -62,10 +62,11 @@ def evaluate_terminal_operations(
     unload_motor_eff: float = 0.92,
     tank_volume_m3: float = 0.0,
     tank_bor_pct_day: float = 0.05,
+    molar_mass_g_mol: float = 16.5,
 ) -> TerminalOperatingMetrics:
     """Calculates BOG rates, standby boil-off, and pumping requirements for both unloading and cooldown recirculation."""
     h_fg = max(latent_heat, 200000.0)
-    rho_norm = 0.736  # kg/Nm3 for LNG BOG at 0 °C, 1.01325 bar
+    rho_norm = max(molar_mass_g_mol / 22.414, 0.05)  # kg/Nm3 from composition molar mass
     rho_liq = max(fluid_density, 1.0)
     cp_val = max(specific_heat, 500.0)
     dt_allow = max(delta_t_allowable, 0.1)
@@ -88,34 +89,43 @@ def evaluate_terminal_operations(
     inventory_kg = line_vol * rho_liq
     bor_pct_day = (bog_kg_h * 24.0 / inventory_kg) * 100.0 if inventory_kg > 0 else 0.0
 
-    # 2. Minimum Recirculation (Cooldown Mode to maintain line within delta_t_allowable)
-    m_recirc_kg_s = q_loop_w / (cp_val * dt_allow)
-    q_recirc_m3_h = (m_recirc_kg_s / rho_liq) * 3600.0
-    pipe_area = (math.pi / 4.0) * (inner_diam_m ** 2)
-    v_recirc = m_recirc_kg_s / (rho_liq * pipe_area) if pipe_area > 0 else 0.0
-    stratification_risk = v_recirc < 0.20  # Richardson stratification / bowing risk
-
-    # 3. Recirculation Pump P-201 Head & Shaft Power (using user-entered efficiencies & target pressure)
+    # 2. Recirculation Circuit Head & Pump Shaft Heat Input
     g = 9.80665
     dp_target_boost = max(0.0, recirc_target_pressure_pa - recirc_suction_pressure_pa) if recirc_target_pressure_pa > 0.0 else 0.0
-    dp_friction_loop = max(pressure_drop_pa, 0.0) + max(return_pressure_drop_pa, 0.0)
-    dp_circuit = max(dp_target_boost + dp_friction_loop, 1.0e5)
+    # Do not double-count main unloading friction with target boost: scale main friction for low cooldown flow or use return friction
+    if recirc_target_pressure_pa > 0.0:
+        dp_loop_at_recirc = max(return_pressure_drop_pa, 0.0)
+        dp_circuit = max(dp_target_boost, dp_loop_at_recirc, 1.0e5)
+    else:
+        dp_circuit = max(max(pressure_drop_pa, 0.0) + max(return_pressure_drop_pa, 0.0), 1.0e5)
     head_m = dp_circuit / (rho_liq * g)
+
+    # Pump shaft energy dissipation into LNG stream (dH_pump = dP / (rho * eta_p))
+    dh_pump_j_kg = dp_circuit / (rho_liq * eta_p_rec)
+    effective_cp_dt = max(cp_val * dt_allow - dh_pump_j_kg, 0.10 * cp_val * dt_allow)
+
+    # 3. Minimum Recirculation (Cooldown Mode to maintain line within delta_t_allowable including pump heat)
+    m_recirc_kg_s = q_loop_w / effective_cp_dt
+    q_recirc_m3_h = (m_recirc_kg_s / rho_liq) * 3600.0
+    pipe_area = (math.pi / 4.0) * (inner_diam_m ** 2)
     p_min_shaft_kw = (m_recirc_kg_s * (dp_circuit / rho_liq) / (eta_p_rec * eta_m_rec)) / 1000.0
 
     # User-entered recirculation flow evaluation & checkpoint
     u_flow_kg_s = m_recirc_kg_s if user_recirc_flow_kg_s is None else max(0.0, float(user_recirc_flow_kg_s))
     u_flow_m3_h = (u_flow_kg_s / rho_liq) * 3600.0
     u_pump_power_kw = (u_flow_kg_s * (dp_circuit / rho_liq) / (eta_p_rec * eta_m_rec)) / 1000.0
-    u_delta_t_k = (q_loop_w / (max(u_flow_kg_s, 1e-4) * cp_val)) if u_flow_kg_s > 0 else 999.9
+    u_delta_t_k = ((q_loop_w / (u_flow_kg_s * cp_val)) + (dh_pump_j_kg / cp_val)) if u_flow_kg_s > 0.0 else float("inf")
+    v_recirc = u_flow_kg_s / (rho_liq * pipe_area) if pipe_area > 0 else 0.0
+    stratification_risk = v_recirc < 0.20  # Richardson stratification / bowing risk at active cooldown flow
 
     if user_recirc_flow_kg_s is not None and u_flow_kg_s < (m_recirc_kg_s - 1e-6):
         deficit_warn = True
+        dt_disp = f"+{u_delta_t_k:.2f} K" if math.isfinite(u_delta_t_k) else "∞ (Akış Yok)"
         warn_msg = (
             f"⚠️ KRİTİK SİRKÜLASYON DEBİSİ UYARISI: Girilen dönüş debisi ({u_flow_kg_s:.2f} kg/s | {u_flow_m3_h:.1f} m³/h), "
             f"hattı ΔT ≤ {dt_allow:.1f} K sınırında soğuk tutmak için gereken minimum debiden "
             f"({m_recirc_kg_s:.2f} kg/s | {q_recirc_m3_h:.1f} m³/h) DÜŞÜKTÜR! "
-            f"Mevcut debide hat boyunca ΔT = +{u_delta_t_k:.2f} K ısınma, flaş/kaynama ve termal eğilme (bowing) oluşacaktır."
+            f"Mevcut debide hat boyunca ΔT = {dt_disp} ısınma, flaş/kaynama ve termal eğilme (bowing) oluşacaktır."
         )
     else:
         deficit_warn = False

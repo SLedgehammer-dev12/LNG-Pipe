@@ -136,3 +136,24 @@ def test_simulation_3d_results_unified_interface_and_hot_reload_resilience():
     assert create_temperature_profile_chart(res_3d) is not None
     assert create_flashing_margin_chart(res_3d) is not None
 
+
+def test_wave3_3d_wall_clustered_grid_laminar_guard_and_grid_validation():
+    fm = FluidManager(fluid_type="pure_methane")
+    layers = [InsulationLayer(name="PIR", thickness_m=0.05, thermal_conductivity=0.024)]
+    tm = PipeThermalModel(inner_diameter_m=0.20, wall_thickness_m=0.008, insulation_layers=layers)
+    # Laminar flow (Re ~ 1380 <= 2300, still subcooled) to verify laminar guard and wall-clustered radial spacing
+    cfg = PipelineSimulationConfig(length_m=100.0, inner_diameter_m=0.20, mass_flow_rate_kg_s=0.25, num_cells=10)
+    res_lam = PipelineSolver3D(fm, tm, Solver3DConfig(pipeline_config=cfg, n_radial=12, n_azimuthal=6, n_axial=10)).solve()
+    # Radial grid must cluster toward wall: outermost spacing smaller than innermost spacing
+    r = res_lam.radial_coords_m
+    assert (r[-1] - r[-2]) < (r[1] - r[0])
+    # Wall must stay hotter than center in laminar conduction
+    assert res_lam.wall_temperature_k[-1] > res_lam.center_temperature_k[-1]
+
+    # Invalid grid dimensions must raise ValueError
+    with pytest.raises(ValueError):
+        PipelineSolver3D(fm, tm, Solver3DConfig(pipeline_config=cfg, n_radial=1, n_azimuthal=4, n_axial=10)).solve()
+    with pytest.raises(ValueError):
+        PipelineSolver3D(fm, tm, Solver3DConfig(pipeline_config=cfg, n_radial=8, n_azimuthal=4, n_axial=0)).solve()
+
+
