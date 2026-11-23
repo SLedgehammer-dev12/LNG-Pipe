@@ -61,3 +61,28 @@ def test_b36_19_includes_unscheduled_mm_thicknesses():
         assert any("Schedule'sız" in k for k in opts), dn_label
         for opt_lbl, wall_mm in opts.items():
             assert 0.0 < wall_mm < row["od_mm"] / 2.0, (dn_label, opt_lbl)
+
+
+def test_b36_19_and_b36_10_standards_accuracy():
+    ss_table = PIPE_TABLE_GROUPS["Paslanmaz Çelik (ASME B36.19)"]
+    cs_table = PIPE_TABLE_GROUPS["Karbon Çelik (ASME B36.10)"]
+
+    # ASME B36.19M 40S = 9.53 mm (STD) for DN300-DN600; 80S = 12.70 mm (XS) for DN250-DN600
+    assert ss_table['DN250 (NPS 10")']["schedules"]["80S"] == 12.70
+    for dn in ('DN300 (NPS 12")', 'DN350 (NPS 14")', 'DN400 (NPS 16")', 'DN450 (NPS 18")', 'DN500 (NPS 20")', 'DN600 (NPS 24")'):
+        assert ss_table[dn]["schedules"]["40S"] == 9.53
+        assert ss_table[dn]["schedules"]["80S"] == 12.70
+
+    # ASME B36.19M 10S for DN350-DN500
+    assert ss_table['DN350 (NPS 14")']["schedules"]["10S"] == 4.78
+    assert ss_table['DN400 (NPS 16")']["schedules"]["10S"] == 4.78
+    assert ss_table['DN450 (NPS 18")']["schedules"]["10S"] == 4.78
+    assert ss_table['DN500 (NPS 20")']["schedules"]["10S"] == 5.54
+
+    # ASME B36.10M DN100/125/150 non-existent schedule cleanup & true Sch 160 values
+    assert "Sch 140" not in cs_table['DN100 (NPS 4")']["schedules"]
+    assert cs_table['DN100 (NPS 4")']["schedules"]["Sch 160"] == 13.49
+    assert "Sch 140" not in cs_table['DN125 (NPS 5")']["schedules"]
+    assert cs_table['DN125 (NPS 5")']["schedules"]["Sch 160"] == 15.88
+    assert "Sch 100" not in cs_table['DN150 (NPS 6")']["schedules"]
+

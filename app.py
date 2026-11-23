@@ -967,9 +967,21 @@ pipe_spec = spec_from_material(
     design_pressure_pa=design_p_bar * 1e5,
     operating_pressure_pa=inlet_p_bar * 1e5,
     pipeline_length_m=length_m,
+    delta_t_k=abs(amb_temp_k - (inlet_t_c + 273.15)),
     fluid_density_kg_m3=rho_avg,
 )
 asme_mech = calculate_asme_b31_3_thickness(pipe_spec)
+ret_outer_m = (return_diameter_mm + 2.0 * return_wall_thickness_mm) / 1000.0
+ret_spec = spec_from_material(
+    pipe_mat_name,
+    outer_diameter_m=ret_outer_m,
+    design_pressure_pa=max(design_p_bar * 1e5, recirc_target_p_pa),
+    operating_pressure_pa=recirc_target_p_pa,
+    pipeline_length_m=length_m,
+    delta_t_k=abs(amb_temp_k - (inlet_t_c + 273.15)),
+    fluid_density_kg_m3=rho_avg,
+)
+ret_asme_mech = calculate_asme_b31_3_thickness(ret_spec)
 v_nom = mass_flow_kg_s / (rho_avg * (np.pi * (diameter_mm / 2000.0) ** 2))
 surge_mech = calculate_joukowsky_surge(pipe_spec, v_nom, valve_closure_time_s, wall_thickness_mm / 1000.0)
 omega_mech = calculate_thermal_contraction_and_omega_loop(pipe_spec, anchor_distance_m=anchor_dist_m, outer_diameter_m=d_outer_m)
@@ -981,13 +993,17 @@ with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama"
     else:
         st.success(terminal_ops.recirc_flow_warning_msg)
 
+    if inlet_p_bar > design_p_bar:
+        st.warning(f"⚠️ İŞLETME BASINCI AŞIMI: Giriş basıncı ({_p_show(inlet_p_bar * 1e5, p_unit):.2f} {u_p}), tasarım basıncını ({_p_show(design_p_bar * 1e5, p_unit):.2f} {u_p}) aşmaktadır!")
+    if asme_mech.get("thick_wall_warning"):
+        st.warning("⚠️ ASME B31.3 Para. 304.1.2 ince cidar sınırı (P/SE > 0.385 veya t ≥ D/6) aşılmıştır; kalın cidar (Lamé) analizi gereklidir.")
+
     col_t1, col_t2, col_t3, col_t4 = st.columns(4)
     bog_kg_s = terminal_ops.bog_rate_kg_h / 3600.0
     tot_bog_kg_s = terminal_ops.total_terminal_bog_kg_h / 3600.0
     p_test_d = _p_show(asme_mech["hydrostatic_test_pressure_bar"] * 1e5, p_unit)
     surge_d = _dp_show(surge_mech["actual_surge_bar"] * 1e5, p_unit)
     peak_p_d = _p_show(surge_mech["peak_line_pressure_bar"] * 1e5, p_unit)
-    surge_limit_d = _p_show(design_p_bar * 1e5 * 1.33, p_unit)
     with col_t1:
         st.markdown(
             f"**Hat & Saha BOG Yükü:**<br/>"
@@ -1005,11 +1021,23 @@ with st.expander("🏭 Terminal Operasyonları & Pompalama / Mekanik Doğrulama"
     with col_t3:
         # B6: mill undertolerance — worst-case actual thickness (0.875*t_nom) must meet t_required
         t_ok = (wall_thickness_mm * (1.0 - pipe_spec.mill_tolerance)) >= asme_mech["t_required_min_mm"]
-        st.markdown(f"**ASME B31.3 Et Kalınlığı:**<br/><span style='color:{'#3fb950' if t_ok else '#f85149'}; font-size:16px; font-weight:700;'>t_req = {asme_mech['t_required_min_mm']:.2f} mm</span><br/><span style='color:#8b949e; font-size:12px;'>Mevcut: {wall_thickness_mm:.1f} mm ({'✓ UYGUN' if t_ok else '⚠️ YETERSİZ'}) | P_test: {p_test_d:.2f} {u_p}</span>", unsafe_allow_html=True)
+        ret_t_ok = (return_wall_thickness_mm * (1.0 - ret_spec.mill_tolerance)) >= ret_asme_mech["t_required_min_mm"]
+        st.markdown(
+            f"**ASME B31.3 Et Kalınlığı:**<br/>"
+            f"<span style='color:{'#3fb950' if (t_ok and ret_t_ok) else '#f85149'}; font-size:16px; font-weight:700;'>Ana t_req = {asme_mech['t_required_min_mm']:.2f} mm</span><br/>"
+            f"<span style='color:#8b949e; font-size:12px;'>Mevcut: {wall_thickness_mm:.1f} mm ({'✓' if t_ok else '⚠️'}) | Dönüş t_req: {ret_asme_mech['t_required_min_mm']:.2f} mm ({'✓' if ret_t_ok else '⚠️'}) | P_test: {p_test_d:.2f} {u_p}</span>",
+            unsafe_allow_html=True,
+        )
     with col_t4:
         # B7: surge acceptance vs design pressure (1.33x occasional overpressure allowance), not hard-coded 5 bar
-        surge_safe = surge_mech["peak_line_pressure_bar"] <= design_p_bar * 1.33
-        st.markdown(f"**ESDV Joukowsky Koç Darbesi:**<br/><span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_dp}</span><br/><span style='color:#8b949e; font-size:12px;'>P_peak = {peak_p_d:.1f} {u_p} (Güvenli Kapanma ≥ {surge_mech['recommended_min_valve_closure_s']:.0f}s)</span>", unsafe_allow_html=True)
+        surge_safe = (not surge_mech.get("overpressure_violation", False)) and (surge_mech["peak_line_pressure_bar"] <= design_p_bar * 1.33)
+        rec_closure_str = "∞ (P_op çok yüksek)" if math.isinf(surge_mech["recommended_min_valve_closure_s"]) else f"{surge_mech['recommended_min_valve_closure_s']:.0f}s"
+        st.markdown(
+            f"**ESDV Koç Darbesi & Isıl Büzülme:**<br/>"
+            f"<span style='color:{'#3fb950' if surge_safe else '#f85149'}; font-size:16px; font-weight:700;'>+{surge_d:.2f} {u_dp}</span><br/>"
+            f"<span style='color:#8b949e; font-size:12px;'>P_peak: {peak_p_d:.1f} {u_p} (Kapanma ≥ {rec_closure_str}) | ΔL: {omega_mech['total_line_contraction_m']:.2f} m, Ω H_min: {omega_mech['min_omega_loop_leg_height_m']:.2f} m</span>",
+            unsafe_allow_html=True,
+        )
 
     # Pompalama Önerisi, Verim ve Kara Tankı BOG Analizi Alt Satırı
     st.markdown("---")

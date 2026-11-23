@@ -12,16 +12,19 @@ from dataclasses import dataclass
 # rho: density (kg/m^3). Conservative values; engineer shall verify against material spec.
 MATERIAL_PROPERTIES = {
     "Paslanmaz Çelik 304L/316L": dict(
-        S_c=138e6, alpha=15.8e-6, E=200e9, rho=8000.0
+        # ASME B31.3 Table A-1 SA-312 TP304L/TP316L: 16.7 ksi = 115 MPa
+        S_c=115e6, alpha=15.8e-6, E=200e9, rho=8000.0
     ),
     "%9 Nikel Çeliği (Cryogenic 9% Ni)": dict(
+        # ASME B31.3 Table A-1 SA-333 Gr. 8: 22.5 ksi ~ 155 MPa
         S_c=155e6, alpha=12.0e-6, E=190e9, rho=7900.0
     ),
     "Invar 36 (Düşük Genleşmeli)": dict(
         S_c=125e6, alpha=1.2e-6, E=145e9, rho=8100.0
     ),
     "Alüminyum 5083-O": dict(
-        S_c=95e6, alpha=23.6e-6, E=70e9, rho=2660.0
+        # ASME B31.3 Table A-1 SB-241 5083-O seamless: ~13.0 ksi = 90 MPa
+        S_c=90e6, alpha=23.6e-6, E=70e9, rho=2660.0
     ),
 }
 
@@ -40,7 +43,7 @@ class PipelineSpecification:
     operating_pressure_pa: float
     pipeline_length_m: float
     material_name: str = "Paslanmaz Çelik 304L/316L"
-    material_allowable_stress_pa: float = 138e6  # 304L/316L S at cryogenic temp (Pa)
+    material_allowable_stress_pa: float = 115e6  # SA-312 TP304L/TP316L S at cryogenic temp (Pa)
     weld_joint_efficiency: float = 1.00          # Seamless or 100% RT E
     y_coefficient: float = 0.40                  # Austenitic steel thin-wall Y
     corrosion_allowance_m: float = 0.000         # Cryogenic clean liquid CA (m)
@@ -48,9 +51,9 @@ class PipelineSpecification:
     thermal_expansion_coeff: float = 15.8e-6     # 304L mean alpha (1/K)
     delta_t_k: float = 182.0                     # +20 C ambient to -162 C operating (182 K)
     fluid_density_kg_m3: float = 430.0           # LNG density at -162 C
-    fluid_bulk_modulus_pa: float = 1.15e9        # LNG liquid bulk modulus K (Pa)
+    fluid_bulk_modulus_pa: float = 0.80e9        # LNG liquid bulk modulus K at -162 C (Pa)
     pipe_youngs_modulus_pa: float = 200e9        # Steel E (Pa)
-    material_allowable_stress_hot_pa: float = 0.0  # S_h at hot condition (Pa); 0 => cold-only displacement
+    material_allowable_stress_hot_pa: float | None = None  # S_h at hot condition (Pa); None => S_c
     stress_range_factor: float = 1.0             # f per B31.3 319.4.4 (1.0 <= ~7000 cycles)
     sustained_stress_pa: float = 0.0             # S_L: pressure + weight sustained stress (Pa)
 
@@ -72,6 +75,17 @@ def calculate_asme_b31_3_thickness(spec: PipelineSpecification) -> dict:
     """ASME B31.3 Para 304.1.2 Minimum Pressure Design Thickness & Hydrotest."""
     if spec.design_pressure_pa <= 0:
         raise ValueError(f"design_pressure_pa must be > 0 (got {spec.design_pressure_pa})")
+    if spec.outer_diameter_m <= 0:
+        raise ValueError(f"outer_diameter_m must be > 0 (got {spec.outer_diameter_m})")
+    if spec.material_allowable_stress_pa <= 0:
+        raise ValueError(f"material_allowable_stress_pa must be > 0 (got {spec.material_allowable_stress_pa})")
+    if not (0.0 < spec.weld_joint_efficiency <= 1.0):
+        raise ValueError(f"weld_joint_efficiency must be in (0, 1] (got {spec.weld_joint_efficiency})")
+    if spec.corrosion_allowance_m < 0:
+        raise ValueError(f"corrosion_allowance_m must be >= 0 (got {spec.corrosion_allowance_m})")
+    if not (0.0 <= spec.mill_tolerance < 1.0):
+        raise ValueError(f"mill_tolerance must be in [0, 1) (got {spec.mill_tolerance})")
+
     p = spec.design_pressure_pa
     d = spec.outer_diameter_m
     s = spec.material_allowable_stress_pa
@@ -79,8 +93,9 @@ def calculate_asme_b31_3_thickness(spec: PipelineSpecification) -> dict:
     y = spec.y_coefficient
     c = spec.corrosion_allowance_m
 
-    # Pressure design thickness (Eq. 3a)
+    # Pressure design thickness (Eq. 3a) and ASME B31.3 Para 304.1.2 thin-wall check
     t_pressure = (p * d) / (2.0 * (s * e + p * y))
+    thick_wall_warning = (p / (s * e) > 0.385) or (t_pressure >= d / 6.0)
     t_req = t_pressure + c
     t_nom = t_req / (1.0 - spec.mill_tolerance)
     p_hydro = 1.5 * spec.design_pressure_pa
@@ -89,7 +104,8 @@ def calculate_asme_b31_3_thickness(spec: PipelineSpecification) -> dict:
         "t_pressure_design_mm": round(t_pressure * 1e3, 3),
         "t_required_min_mm": round(t_req * 1e3, 3),
         "t_nominal_recommended_mm": round(t_nom * 1e3, 3),
-        "hydrostatic_test_pressure_bar": round(p_hydro * 1e-5, 2)
+        "hydrostatic_test_pressure_bar": round(p_hydro * 1e-5, 2),
+        "thick_wall_warning": thick_wall_warning,
     }
 
 
@@ -101,16 +117,17 @@ def calculate_thermal_contraction_and_omega_loop(
     """Thermal contraction and Omega expansion loop flexibility (ASME B31.3 Para 319)."""
     # Unit contraction
     contraction_per_meter = spec.thermal_expansion_coeff * spec.delta_t_k
+    total_contraction_line = contraction_per_meter * max(spec.pipeline_length_m, 0.0)
     total_contraction_1km = contraction_per_meter * 1000.0
     delta_l_loop = contraction_per_meter * anchor_distance_m
 
     # Displacement stress limit S_A (ASME B31.3 319.4.1):
     #   Eq. 1a: S_A = f (1.25 S_c + 0.25 S_h)
     #   Eq. 1b: S_A = f [1.25 (S_c + S_h) - S_L]  when S_h > S_L
-    # S_c = cold allowable, S_h = hot allowable (0 => cold-only), f = stress-range factor,
-    # S_L = sustained stress (pressure + weight).
+    # S_c = cold allowable, S_h = hot allowable (defaults to S_c for ambient/warm-up),
+    # f = stress-range factor, S_L = sustained stress (pressure + weight).
     s_c = spec.material_allowable_stress_pa
-    s_h = spec.material_allowable_stress_hot_pa
+    s_h = s_c if spec.material_allowable_stress_hot_pa is None else spec.material_allowable_stress_hot_pa
     f = spec.stress_range_factor
     s_l = spec.sustained_stress_pa
     if s_h > s_l:
@@ -126,7 +143,8 @@ def calculate_thermal_contraction_and_omega_loop(
 
     return {
         "contraction_rate_mm_per_m": round(contraction_per_meter * 1e3, 3),
-        "total_line_contraction_m": round(total_contraction_1km, 3),
+        "total_line_contraction_m": round(total_contraction_line, 3),
+        "contraction_per_km_m": round(total_contraction_1km, 3),
         "loop_absorbed_delta_l_mm": round(delta_l_loop * 1e3, 2),
         "allowable_displacement_stress_mpa": round(s_a * 1e-6, 1),
         "min_omega_loop_leg_height_m": round(h_min, 2)
@@ -165,10 +183,15 @@ def calculate_joukowsky_surge(
 
     peak_pressure_bar = (spec.operating_pressure_pa + delta_p_actual) * 1e-5
 
-    # Safe closure time for 133% MAWP surge limit
+    # Safe closure time for ASME B31.3 Para. 302.2.4 occasional overpressure limit (1.33 * P_design - P_operating)
     p_mawp = spec.design_pressure_pa
-    delta_p_allowable = max(0.33 * p_mawp, 1e5)
-    min_safe_time_s = (2.0 * rho * spec.pipeline_length_m * nominal_velocity_m_s) / delta_p_allowable
+    delta_p_allowable = 1.33 * p_mawp - spec.operating_pressure_pa
+    overpressure_violation = delta_p_allowable <= 0.0
+    if overpressure_violation:
+        rec_closure_s = float("inf")
+    else:
+        min_safe_time_s = (2.0 * rho * spec.pipeline_length_m * nominal_velocity_m_s) / delta_p_allowable
+        rec_closure_s = round(max(min_safe_time_s * 1.5, 15.0), 1)
 
     return {
         "speed_of_sound_m_s": round(c_sound, 1),
@@ -177,5 +200,6 @@ def calculate_joukowsky_surge(
         "actual_surge_bar": round(delta_p_actual * 1e-5, 2),
         "peak_line_pressure_bar": round(peak_pressure_bar, 2),
         "closure_regime": regime,
-        "recommended_min_valve_closure_s": round(max(min_safe_time_s * 1.5, 15.0), 1)
+        "recommended_min_valve_closure_s": rec_closure_s,
+        "overpressure_violation": overpressure_violation,
     }

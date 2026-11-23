@@ -145,3 +145,32 @@ def test_b4_sa_uses_equation_1b_when_hot_allowable_high():
     # Eq. 1b: 1.25*(138+100) - 50 = 247.5 MPa
     assert 240.0 < res["allowable_displacement_stress_mpa"] < 255.0
 
+
+def test_wave2_allowable_stress_thick_wall_contraction_scaling_and_surge_headroom():
+    # 1. SA-312 TP304L/316L allowable stress is 115 MPa per ASME B31.3 Table A-1
+    assert MATERIAL_PROPERTIES["Paslanmaz Çelik 304L/316L"]["S_c"] == 115e6
+    assert MATERIAL_PROPERTIES["Alüminyum 5083-O"]["S_c"] == 90e6
+
+    # 2. Contraction scales with actual pipeline_length_m, and S_h defaults to S_c
+    spec_500 = spec_from_material("Paslanmaz Çelik 304L/316L", outer_diameter_m=0.4064, design_pressure_pa=2.0e6, operating_pressure_pa=1.0e6, pipeline_length_m=500.0)
+    om_500 = calculate_thermal_contraction_and_omega_loop(spec_500, anchor_distance_m=200.0, outer_diameter_m=0.4064)
+    assert om_500["total_line_contraction_m"] == pytest.approx(om_500["contraction_per_km_m"] * 0.5, abs=0.01)
+    # With S_h defaulted to S_c = 115 MPa and S_L = 0, Eq. 1b gives 1.25 * (115 + 115) = 287.5 MPa
+    assert om_500["allowable_displacement_stress_mpa"] == pytest.approx(287.5, abs=0.2)
+
+    # 3. Thick-wall applicability flag and invalid-input guards
+    high_p_spec = PipelineSpecification(outer_diameter_m=0.20, design_pressure_pa=60e6, operating_pressure_pa=10e6, pipeline_length_m=100.0, material_allowable_stress_pa=115e6)
+    assert calculate_asme_b31_3_thickness(high_p_spec)["thick_wall_warning"] is True
+    with pytest.raises(ValueError):
+        calculate_asme_b31_3_thickness(PipelineSpecification(outer_diameter_m=0.0, design_pressure_pa=2e6, operating_pressure_pa=1e6, pipeline_length_m=100.0))
+    with pytest.raises(ValueError):
+        calculate_asme_b31_3_thickness(PipelineSpecification(outer_diameter_m=0.2, design_pressure_pa=2e6, operating_pressure_pa=1e6, pipeline_length_m=100.0, mill_tolerance=1.0))
+
+    # 4. Surge headroom uses (1.33 * P_design - P_operating); flags violation when P_op >= 1.33 * P_design
+    import math
+    over_spec = PipelineSpecification(outer_diameter_m=0.4064, design_pressure_pa=2.0e6, operating_pressure_pa=3.0e6, pipeline_length_m=500.0)
+    over_surge = calculate_joukowsky_surge(over_spec, nominal_velocity_m_s=2.0, valve_closure_time_s=15.0, wall_thickness_m=0.008)
+    assert over_surge["overpressure_violation"] is True
+    assert math.isinf(over_surge["recommended_min_valve_closure_s"])
+
+
