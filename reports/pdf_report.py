@@ -36,6 +36,11 @@ def _register_unicode_fonts() -> Tuple[str, str]:
             "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
             "LNGDejaVuSans",
         ),
+        (
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arial.ttf"),
+            os.path.join(os.environ.get("WINDIR", r"C:\Windows"), "Fonts", "arialbd.ttf"),
+            "LNGWindowsArial",
+        ),
     ]
     for reg_path, bold_path, family_name in candidates:
         if os.path.exists(reg_path):

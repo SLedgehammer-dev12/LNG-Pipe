@@ -1,6 +1,7 @@
 """Interactive Three.js 3D Marine Terminal Digital Twin for LNG Transfer System."""
 
 import json
+from components._three_assets import get_three_script_tags
 from core.solver import PipelineSimulationResults
 from core.solver_3d import Simulation3DResults, is_3d_results
 
@@ -293,8 +294,7 @@ def generate_terminal_3d_html(
       border-radius: 2px;
     }}
   </style>
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+  {get_three_script_tags()}
 </head>
 <body>
   <div id="canvas-container">
